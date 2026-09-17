@@ -6,6 +6,12 @@
   "scripts": {
     "dev:api": "npm --workspace @assembly/api run dev",
     "dev:admin": "npm --workspace @assembly/admin run dev",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "biome check apps",
+    "lint:fix": "biome check --write apps",
     "test": "npm --workspace @assembly/api test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14"
   }
 }

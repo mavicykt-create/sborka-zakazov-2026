@@ -35,7 +35,7 @@ enum ItemStatus {
 model Order {
   id             String       @id @default(cuid())
   documentNumber String
-  documentDate   DateTime
+  documentDate   DateTime     @db.Date
   warehouse      String
   sourceHash     String?      @unique
   status         OrderStatus  @default(NEW)
