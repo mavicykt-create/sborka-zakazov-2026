@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderStatus {
+  NEW
+  READY
+  ASSIGNED
+  PICKING
+  REVIEW_REQUIRED
+  COMPLETED
+  CLOSED
+}
+
+enum PickType {
+  PACKAGE
+  PIECE
+  REVIEW
+}
+
+enum ItemStatus {
+  PENDING
+  ASSIGNED
+  ACTIVE
+  PICKED
+  NOT_FOUND
+  SKIPPED
+}
+
+model Order {
+  id             String       @id @default(cuid())
+  documentNumber String
+  documentDate   DateTime
+  warehouse      String
+  sourceHash     String?      @unique
+  status         OrderStatus  @default(NEW)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  items          OrderItem[]
+
+  @@unique([documentNumber, documentDate, warehouse])
+}
+
+model OrderItem {
+  id              String     @id @default(cuid())
+  orderId         String
+  sourceLine       Int
+  barcode          String?
+  name             String
+  groupKey         String
+  packageQuantity  Decimal?   @db.Decimal(14, 3)
+  pieceQuantity    Decimal?   @db.Decimal(14, 3)
+  pickType         PickType
+  pickQuantity     Decimal    @db.Decimal(14, 3)
+  status           ItemStatus @default(PENDING)
+  sortIndex        Int
+  pickedAt         DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  order            Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, sourceLine])
+  @@index([orderId, sortIndex])
+  @@index([orderId, groupKey])
+}

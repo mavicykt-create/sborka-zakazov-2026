@@ -1,0 +1,11 @@
+{
+  "name": "assembly-orders-2026",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm --workspace @assembly/api run dev",
+    "dev:admin": "npm --workspace @assembly/admin run dev",
+    "test": "npm --workspace @assembly/api test"
+  }
+}
