@@ -32,6 +32,25 @@ enum ItemStatus {
   SKIPPED
 }
 
+enum ShiftStatus {
+  OFF_SHIFT
+  AVAILABLE
+  BUSY
+}
+
+enum EventType {
+  ORDER_ASSIGNED
+  ORDER_STARTED
+  ORDER_COMPLETED
+  ITEM_ASSIGNED
+  ITEM_REASSIGNED
+  ITEM_ACTIVE
+  ITEM_PICKED
+  ITEM_NOT_FOUND
+  ITEM_SKIPPED
+  ITEM_UNDONE
+}
+
 model Order {
   id             String       @id @default(cuid())
   documentNumber String
@@ -44,6 +63,7 @@ model Order {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   items          OrderItem[]
+  events         OrderEvent[]
 
   @@unique([documentNumber, documentDate, warehouse])
 }
@@ -62,11 +82,49 @@ model OrderItem {
   status           ItemStatus @default(PENDING)
   sortIndex        Int
   pickedAt         DateTime?
+  assignedAt       DateTime?
+  assignedWorkerId String?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   order            Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedWorker   Worker?    @relation(fields: [assignedWorkerId], references: [id], onDelete: SetNull)
+  events           OrderEvent[]
 
   @@unique([orderId, sourceLine])
   @@index([orderId, sortIndex])
   @@index([orderId, groupKey])
+  @@index([assignedWorkerId, status])
+}
+
+model Worker {
+  id           String       @id @default(cuid())
+  login        String       @unique
+  passwordHash String
+  name         String
+  isActive     Boolean      @default(true)
+  shiftStatus  ShiftStatus  @default(OFF_SHIFT)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  assignedItems OrderItem[]
+  events       OrderEvent[]
+
+  @@index([isActive, shiftStatus])
+}
+
+model OrderEvent {
+  id        String    @id @default(cuid())
+  orderId   String
+  itemId    String?
+  workerId  String?
+  type      EventType
+  serverAt  DateTime  @default(now())
+  deviceAt  DateTime?
+  metadata  Json?
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item      OrderItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  worker    Worker?   @relation(fields: [workerId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, serverAt])
+  @@index([itemId, serverAt])
+  @@index([workerId, serverAt])
 }
