@@ -39,6 +39,12 @@ class SpeechTextTest {
             "Шоколадные батончики",
             categorySpeech(testItem().copy(groupKey = "Шоколадные", name = "Шоколадные батончики Snickers")),
         )
+        assertEquals("Плитки", categorySpeech(testItem().copy(groupKey = "Плитки", name = "Плитки Alpen Gold")))
+        assertEquals(
+            "Жидкие конфеты",
+            categorySpeech(testItem().copy(groupKey = "Жидкие", name = "Жидкие конфеты Slime")),
+        )
+        assertEquals("Прикасса", categorySpeech(testItem().copy(groupKey = "Прикасса", name = "Прикасса Mentos")))
         assertEquals(
             "Жевательные резинки",
             categorySpeech(testItem().copy(groupKey = "Жевательные", name = "Жевательные резинки Orbit")),
