@@ -13,7 +13,7 @@ private val hundreds = listOf("", "сто", "двести", "триста", "ч�
 fun sanitizeProductName(name: String): String = name
     .replace(Regex("(?<![\\p{L}\\p{N}])\\d+\\s*(?:[/\\\\*xх]\\s*\\d+){1,2}(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE), " ")
     .replace(Regex("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]+"), " ")
-    .replace(Regex("\\(\\s*\\)|\\[\\s*]|\\{\\s*}"), " ")
+    .replace(Regex("\\(\\s*\\)|\\[\\s*\\]|\\{\\s*\\}"), " ")
     .replace(Regex("\\s+([,.;:!?])"), "$1")
     .trim(' ', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '-', '–', '—', '/', '\\', '*')
     .replace(Regex("\\s+"), " ")

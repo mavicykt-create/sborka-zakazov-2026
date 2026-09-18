@@ -20,6 +20,10 @@ class SpeechTextTest {
     }
 
     @Test
+    fun `removes empty bracket groups with Android compatible regex`() {
+        assertEquals("Товар вкус", sanitizeProductName("Товар () [] {} вкус"))
+    }
+    @Test
     fun `builds piece phrase`() {
         val speech = itemSpeech(testItem(pickType = ru.sborka.picker.data.PickType.PIECE, pickQuantity = 7.0), true)
         assertEquals("Штучный товар. Товар. семь штук.", speech)
