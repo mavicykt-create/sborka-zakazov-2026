@@ -660,6 +660,131 @@ main {
 .workerForm .primary {
   margin-top: 20px;
 }
+.completionBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #c9d8ce;
+  border-radius: 14px;
+  background: linear-gradient(120deg, #edf6f0, #fff9ec);
+}
+.completionBar > div {
+  margin-right: auto;
+}
+.completionBar .eyebrow {
+  margin-bottom: 2px;
+}
+.completionBar a {
+  padding: 10px 13px;
+  border: 1px solid #9db3a5;
+  border-radius: 9px;
+  color: var(--forest);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+.completionBar small {
+  max-width: 190px;
+  color: #8b3f36;
+}
+.problemsPanel,
+.historyPanel {
+  min-height: 560px;
+}
+.problemGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 14px;
+}
+.problemCard {
+  padding: 17px;
+  border: 1px solid #e3c7c2;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fff, #fff4f1);
+}
+.problemCard h3 {
+  margin: 14px 0 6px;
+  font-size: 17px;
+}
+.problemCard p,
+.problemMeta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.problemOrder,
+.problemMeta,
+.problemActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.problemOrder button,
+.problemActions button {
+  padding: 8px 10px;
+  border: 1px solid #c7d1ca;
+  border-radius: 8px;
+  color: var(--forest);
+  background: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+.problemActions {
+  justify-content: flex-start;
+  margin-top: 15px;
+  flex-wrap: wrap;
+}
+.problemActions .danger {
+  color: #963c31;
+  border-color: #dfb4ae;
+}
+.historyTable {
+  display: grid;
+  gap: 8px;
+}
+.historyRow {
+  display: grid;
+  grid-template-columns: 130px 120px minmax(180px, 1fr) 90px 160px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: inherit;
+  background: #fbfcfa;
+  text-align: left;
+  cursor: pointer;
+}
+.historyRow:hover {
+  border-color: #94ad9e;
+  background: #f2f7f3;
+}
+.timeline {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.timelineList {
+  display: grid;
+  gap: 0;
+  max-height: 340px;
+  overflow: auto;
+}
+.timelineEvent {
+  display: grid;
+  grid-template-columns: 150px 190px 1fr;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px dashed #d9dfda;
+  font-size: 12px;
+}
+.timelineEvent time,
+.timelineEvent span {
+  color: var(--muted);
+}
 .empty {
   display: grid;
   min-height: 320px;
@@ -698,6 +823,20 @@ main {
   .headerActions {
     align-items: stretch;
     flex-direction: column;
+  }
+  .tabs {
+    flex-wrap: wrap;
+  }
+  .completionBar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .historyRow {
+    grid-template-columns: 1fr 1fr;
+  }
+  .timelineEvent {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
   .workersLayout {
     grid-template-columns: 1fr;
