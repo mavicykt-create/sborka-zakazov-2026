@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import Fastify from 'fastify';
 import { ZodError, z } from 'zod';
 import { db } from './db.js';
+import { getAnalytics } from './modules/analytics/analyticsService.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
 import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modules/orders/importService.js';
 import { createOrderReport } from './modules/reports/reportService.js';
@@ -106,6 +107,12 @@ const importQuerySchema = z.object({
   status: z.enum(['SUCCESS', 'DUPLICATE', 'FAILED']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
+const analyticsQuerySchema = z.object({
+  days: z.coerce
+    .number()
+    .pipe(z.union([z.literal(7), z.literal(30), z.literal(90)]))
+    .default(30),
+});
 
 export async function buildApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -148,6 +155,10 @@ export async function buildApp() {
   });
 
   app.get('/api/dashboard', getDashboard);
+  app.get<{ Querystring: unknown }>('/api/analytics', async (request) => {
+    const query = analyticsQuerySchema.parse(request.query);
+    return getAnalytics(query.days);
+  });
   app.get('/api/settings', getPublicSettings);
   app.get<{ Querystring: unknown }>('/api/imports', async (request) =>
     listImportAttempts(importQuerySchema.parse(request.query)),
