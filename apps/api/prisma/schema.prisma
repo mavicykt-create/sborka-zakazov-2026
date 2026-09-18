@@ -32,6 +32,11 @@ enum ItemStatus {
   SKIPPED
 }
 
+enum ProblemResolution {
+  CONFIRMED
+  RESOLVED
+}
+
 enum ShiftStatus {
   OFF_SHIFT
   AVAILABLE
@@ -49,6 +54,10 @@ enum EventType {
   ITEM_NOT_FOUND
   ITEM_SKIPPED
   ITEM_UNDONE
+  ITEM_REVIEWED
+  PROBLEM_CONFIRMED
+  PROBLEM_RETURNED
+  ORDER_CLOSED
 }
 
 model Order {
@@ -60,6 +69,7 @@ model Order {
   status         OrderStatus  @default(NEW)
   startedAt      DateTime?
   completedAt    DateTime?
+  closedAt       DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   items          OrderItem[]
@@ -82,6 +92,10 @@ model OrderItem {
   status           ItemStatus @default(PENDING)
   sortIndex        Int
   pickedAt         DateTime?
+  problemResolution ProblemResolution?
+  reviewComment    String?
+  reviewedBy       String?
+  reviewedAt       DateTime?
   assignedAt       DateTime?
   assignedWorkerId String?
   createdAt        DateTime   @default(now())
