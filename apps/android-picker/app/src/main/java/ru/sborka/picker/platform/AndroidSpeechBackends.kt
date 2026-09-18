@@ -3,6 +3,7 @@ package ru.sborka.picker.platform
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.io.File
@@ -14,6 +15,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import ru.sborka.picker.data.PickerRepository
 import ru.sborka.picker.data.UnauthorizedException
 import ru.sborka.picker.domain.SpeechBackend
+import ru.sborka.picker.domain.alenaPlaybackSpeed
 
 class AndroidTtsBackend(context: Context) : SpeechBackend {
     private val ready = CompletableDeferred<Boolean>()
@@ -80,8 +82,17 @@ class AlenaSpeechBackend(
                 )
                 player.setDataSource(file.absolutePath)
                 player.setOnPreparedListener {
-                    it.playbackParams = it.playbackParams.setSpeed(rate)
-                    it.start()
+                    try {
+                        // Device/codec support varies; false makes FallbackSpeechOutput use Android TTS.
+                        it.playbackParams = PlaybackParams()
+                            .setSpeed(alenaPlaybackSpeed(rate))
+                            .setPitch(1f)
+                            .setAudioFallbackMode(PlaybackParams.AUDIO_FALLBACK_MODE_FAIL)
+                        it.start()
+                    } catch (_: RuntimeException) {
+                        it.release()
+                        if (continuation.isActive) continuation.resume(false)
+                    }
                 }
                 player.setOnCompletionListener {
                     it.release()

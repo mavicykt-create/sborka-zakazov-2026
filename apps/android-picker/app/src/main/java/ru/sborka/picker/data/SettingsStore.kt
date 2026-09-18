@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import ru.sborka.picker.domain.DEFAULT_SPEECH_RATE
 
 private val Context.pickerDataStore by preferencesDataStore(name = "picker_settings")
 
@@ -15,7 +16,7 @@ enum class VoiceSource { ALENA, SYSTEM }
 
 data class PickerSettings(
     val voiceSource: VoiceSource = VoiceSource.ALENA,
-    val speechRate: Float = 1.22f,
+    val speechRate: Float = DEFAULT_SPEECH_RATE,
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val shortNames: Boolean = true,
@@ -32,7 +33,7 @@ class SettingsStore(private val context: Context) : PickerSettingsRepository {
             voiceSource = runCatching {
                 VoiceSource.valueOf(values[VOICE_SOURCE] ?: VoiceSource.ALENA.name)
             }.getOrDefault(VoiceSource.ALENA),
-            speechRate = values[SPEECH_RATE] ?: 1.22f,
+            speechRate = values[SPEECH_RATE] ?: DEFAULT_SPEECH_RATE,
             soundEnabled = values[SOUND_ENABLED] ?: true,
             vibrationEnabled = values[VIBRATION_ENABLED] ?: true,
             shortNames = values[SHORT_NAMES] ?: true,

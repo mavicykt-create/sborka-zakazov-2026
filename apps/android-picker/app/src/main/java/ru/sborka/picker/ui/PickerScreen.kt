@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +47,7 @@ import ru.sborka.picker.data.PickerItem
 import ru.sborka.picker.data.PickerSettings
 import ru.sborka.picker.data.VoiceSource
 import ru.sborka.picker.domain.VoiceCommand
+import ru.sborka.picker.domain.SPEECH_RATE_OPTIONS
 
 private val Forest = Color(0xFF153E35)
 private val Cream = Color(0xFFF7F1E3)
@@ -318,13 +321,14 @@ private fun SettingsCard(settings: PickerSettings, alenaAvailable: Boolean, onSe
                     label = { Text("Голос телефона") },
                 )
             }
-            Text("Скорость речи", color = Forest, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(1f, 1.12f, 1.22f, 1.35f).forEach { rate ->
+            Text("Скорость голоса", color = Forest, fontWeight = FontWeight.Bold)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(SPEECH_RATE_OPTIONS.size) { index ->
+                    val rate = SPEECH_RATE_OPTIONS[index]
                     FilterChip(
                         selected = settings.speechRate == rate,
                         onClick = { onSettings(settings.copy(speechRate = rate)) },
-                        label = { Text(rate.toString()) },
+                        label = { Text("${formatSpeechRate(rate)}×") },
                     )
                 }
             }
@@ -345,3 +349,6 @@ private fun SettingSwitch(label: String, checked: Boolean, onChecked: (Boolean) 
 
 private fun formatQuantity(value: Double): String =
     if (value == value.toInt().toDouble()) value.toInt().toString() else value.toString().replace('.', ',')
+
+private fun formatSpeechRate(value: Float): String =
+    if (value == value.toInt().toFloat()) value.toInt().toString() else value.toString()

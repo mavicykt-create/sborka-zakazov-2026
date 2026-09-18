@@ -16,6 +16,8 @@ import androidx.compose.runtime.getValue
 import kotlinx.coroutines.launch
 import ru.sborka.picker.data.VoiceSource
 import ru.sborka.picker.domain.FallbackSpeechOutput
+import ru.sborka.picker.domain.RecognitionReadiness
+import ru.sborka.picker.domain.shouldListen
 import ru.sborka.picker.platform.AlenaSpeechBackend
 import ru.sborka.picker.platform.AndroidTtsBackend
 import ru.sborka.picker.platform.FeedbackPlayer
@@ -36,12 +38,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var speech: FallbackSpeechOutput
     private lateinit var feedback: FeedbackPlayer
     private var microphoneGranted = false
+    private var foreground = false
+    private var speaking = false
 
     private val microphonePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         microphoneGranted = granted
-        if (granted && viewModel.state.value.loggedIn && !viewModel.state.value.completed) recognition.start()
+        startRecognitionIfNeeded()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +84,14 @@ class MainActivity : ComponentActivity() {
         if (!microphoneGranted) microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
+    override fun onStart() {
+        super.onStart()
+        foreground = true
+        startRecognitionIfNeeded()
+    }
+
     override fun onStop() {
+        foreground = false
         recognition.stop()
         super.onStop()
     }
@@ -96,6 +107,7 @@ class MainActivity : ComponentActivity() {
         when (effect) {
             is PickerEffect.Feedback -> feedback.play(effect.kind, viewModel.state.value.settings)
             is PickerEffect.Speak -> {
+                speaking = true
                 recognition.stop()
                 try {
                     val state = viewModel.state.value
@@ -111,6 +123,7 @@ class MainActivity : ComponentActivity() {
                         rate = state.settings.speechRate,
                     )
                 } finally {
+                    speaking = false
                     startRecognitionIfNeeded()
                 }
             }
@@ -121,6 +134,14 @@ class MainActivity : ComponentActivity() {
 
     private fun startRecognitionIfNeeded() {
         val state = viewModel.state.value
-        if (microphoneGranted && state.loggedIn && !state.completed && !state.busy) recognition.start()
+        val readiness = RecognitionReadiness(
+            foreground = foreground,
+            microphoneGranted = microphoneGranted,
+            loggedIn = state.loggedIn,
+            completed = state.completed,
+            backendBusy = state.busy,
+            speaking = speaking,
+        )
+        if (readiness.shouldListen()) recognition.start()
     }
 }
