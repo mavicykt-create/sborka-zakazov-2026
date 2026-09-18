@@ -119,6 +119,22 @@ npm --workspace @assembly/api run prisma:seed
 
 Сигнал «Принято» звучит только после успешного ответа backend. Следующая позиция произносится сразу без дополнительного сигнала, а команда «Повтори» не добавляет отдельный звук. При сетевой ошибке текущая позиция не меняется, переход не выполняется, а интерфейс показывает просьбу повторить команду. Позиции `REVIEW` заблокированы до решения администратора. В панели «Проверить сигналы» можно отдельно прослушать шесть локальных сигналов.
 
+#### Yandex SpeechKit Alena
+
+Сборщик может выбрать источник речи «Alena — Yandex SpeechKit» или оставить системный «Голос телефона». Без ключа вариант Alena показан как недоступный, а вся голосовая сборка продолжает работать через браузерный TTS. При timeout, ошибке SpeechKit или невозможности проиграть аудио приложение автоматически произносит ту же фразу системным голосом и продолжает слушать команды через 200 мс.
+
+Секрет хранится только на backend. Добавьте значения в локальный `.env` или переменные production-окружения; настоящий ключ не должен попадать в `VITE_*`, браузер или репозиторий:
+
+```dotenv
+YANDEX_SPEECHKIT_API_KEY=
+YANDEX_SPEECHKIT_FOLDER_ID=
+YANDEX_SPEECHKIT_VOICE=alena
+```
+
+Интеграция использует актуальный SpeechKit API v1: `POST https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize`, авторизацию `Api-Key`, MP3, голос `alena` и серверную скорость `1.22`. Для API-ключа сервисного аккаунта `folderId` в запрос не передаётся согласно официальной документации; переменная оставлена для будущей поддержки IAM-аутентификации. Аудио повторяющихся нормализованных фраз хранится в ограниченном in-memory LRU/TTL-кэше. Тесты используют только mock-провайдер.
+
+Официальная документация: [метод API v1](https://yandex.cloud/ru/docs/speechkit/tts/request), [голоса SpeechKit](https://yandex.cloud/ru/docs/speechkit/tts/voices), [API-ключи](https://yandex.cloud/ru/docs/iam/concepts/authorization/api-key).
+
 Для production-окружения применяйте уже созданные миграции без интерактивного режима:
 
 ```bash
@@ -130,6 +146,7 @@ npm --workspace @assembly/api run prisma:deploy
 - `GET /api/workers`, `POST /api/workers`, `PATCH /api/workers/:id`;
 - `POST /api/orders/:id/assign`, `POST /api/orders/:id/reassign`;
 - `PATCH /api/order-items/:id/status`, `POST /api/order-items/:id/undo`;
+- `GET /api/picker/speech/settings`, `POST /api/picker/speech` — защищённые маршруты SpeechKit;
 - `GET /api/orders/:id/events`.
 
 Маршруты проверки и отчётности:
