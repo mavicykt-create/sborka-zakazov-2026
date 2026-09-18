@@ -266,6 +266,7 @@ export async function changeItemStatus(
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
+    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
     if (!item.assignedWorkerId) throw new WorkflowError('Позиция не назначена сборщику', 409);
     if (workerId && workerId !== item.assignedWorkerId) {
       throw new WorkflowError('Позиция назначена другому сборщику', 403);
@@ -353,6 +354,7 @@ export async function undoItemStatus(itemId: string, workerId?: string, deviceAt
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
+    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
     if (!item.assignedWorkerId) throw new WorkflowError('Позиция не назначена сборщику', 409);
     if (workerId && workerId !== item.assignedWorkerId) {
       throw new WorkflowError('Позиция назначена другому сборщику', 403);

@@ -5,6 +5,7 @@ import './styles.css';
 type ShiftStatus = 'OFF_SHIFT' | 'AVAILABLE' | 'BUSY';
 type ItemStatus = 'PENDING' | 'ASSIGNED' | 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED';
 type OrderStatus = 'NEW' | 'READY' | 'ASSIGNED' | 'PICKING' | 'REVIEW_REQUIRED' | 'COMPLETED' | 'CLOSED';
+type ProblemResolution = 'CONFIRMED' | 'RESOLVED' | null;
 
 type Progress = {
   total: number;
@@ -31,6 +32,9 @@ type OrderListItem = {
   _count: { items: number };
   progress: Progress;
   createdAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  closedAt?: string | null;
 };
 
 type Item = {
@@ -46,9 +50,25 @@ type Item = {
   status: ItemStatus;
   assignedWorkerId: string | null;
   assignedWorker: Pick<Worker, 'id' | 'login' | 'name' | 'isActive' | 'shiftStatus'> | null;
+  problemResolution: ProblemResolution;
+  reviewComment: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  pickedAt?: string | null;
 };
 
 type Order = OrderListItem & { items: Item[] };
+type Problem = Item & {
+  order: Pick<OrderListItem, 'id' | 'documentNumber' | 'documentDate' | 'warehouse' | 'status'>;
+};
+type OrderEvent = {
+  id: string;
+  type: string;
+  serverAt: string;
+  metadata: Record<string, unknown> | null;
+  worker: Pick<Worker, 'id' | 'name'> | null;
+  item: Pick<Item, 'id' | 'name' | 'sourceLine'> | null;
+};
 type ImportResponse = { duplicate: boolean; order: Order; warnings?: string[] };
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
@@ -65,9 +85,12 @@ function quantity(value: string | number | null): string {
 }
 
 function App() {
-  const [section, setSection] = useState<'orders' | 'workers'>('orders');
+  const [section, setSection] = useState<'orders' | 'workers' | 'problems' | 'history'>('orders');
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [history, setHistory] = useState<OrderListItem[]>([]);
+  const [events, setEvents] = useState<OrderEvent[]>([]);
   const [selected, setSelected] = useState<Order | null>(null);
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -75,23 +98,41 @@ function App() {
   const [workerForm, setWorkerForm] = useState({ name: '', login: '', password: '' });
 
   async function refreshLists() {
-    const [nextOrders, nextWorkers] = await Promise.all([
+    const [nextOrders, nextWorkers, nextProblems, nextHistory] = await Promise.all([
       requestJson<OrderListItem[]>(`${API}/api/orders`),
       requestJson<Worker[]>(`${API}/api/workers`),
+      requestJson<Problem[]>(`${API}/api/problems`),
+      requestJson<OrderListItem[]>(`${API}/api/orders/history`),
     ]);
     setOrders(nextOrders);
     setWorkers(nextWorkers);
-    return { nextOrders, nextWorkers };
+    setProblems(nextProblems);
+    setHistory(nextHistory);
+    return { nextOrders, nextWorkers, nextProblems, nextHistory };
   }
 
   useEffect(() => {
     Promise.all([
       requestJson<OrderListItem[]>(`${API}/api/orders`),
       requestJson<Worker[]>(`${API}/api/workers`),
+      requestJson<Problem[]>(`${API}/api/problems`),
+      requestJson<OrderListItem[]>(`${API}/api/orders/history`),
     ])
-      .then(([nextOrders, nextWorkers]) => {
+      .then(([nextOrders, nextWorkers, nextProblems, nextHistory]) => {
         setOrders(nextOrders);
         setWorkers(nextWorkers);
+        setProblems(nextProblems);
+        setHistory(nextHistory);
+        const orderId = new URLSearchParams(window.location.search).get('order');
+        if (!orderId) return undefined;
+        return Promise.all([
+          requestJson<Order>(`${API}/api/orders/${orderId}`),
+          requestJson<OrderEvent[]>(`${API}/api/orders/${orderId}/events`),
+        ]).then(([order, orderEvents]) => {
+          setSelected(order);
+          setEvents(orderEvents);
+          setSelectedWorkers([...new Set(order.items.map((item) => item.assignedWorkerId).filter(isString))]);
+        });
       })
       .catch((error) => setNotice(error instanceof Error ? error.message : 'API недоступен'));
   }, []);
@@ -100,10 +141,10 @@ function App() {
     () => ({
       newOrders: orders.filter((order) => order.status === 'NEW').length,
       picking: orders.filter((order) => ['ASSIGNED', 'PICKING'].includes(order.status)).length,
-      problems: orders.filter((order) => order.status === 'REVIEW_REQUIRED').length,
-      ready: orders.filter((order) => order.status === 'COMPLETED').length,
+      problems: problems.length,
+      ready: orders.filter((order) => ['COMPLETED', 'CLOSED'].includes(order.status)).length,
     }),
-    [orders],
+    [orders, problems],
   );
 
   const groups = useMemo(() => {
@@ -120,7 +161,10 @@ function App() {
   const attention = useMemo(
     () =>
       selected?.items.filter(
-        (item) => item.status === 'NOT_FOUND' || item.status === 'SKIPPED' || item.pickType === 'REVIEW',
+        (item) =>
+          ((item.status === 'NOT_FOUND' || item.status === 'SKIPPED') &&
+            item.problemResolution !== 'CONFIRMED') ||
+          item.pickType === 'REVIEW',
       ) ?? [],
     [selected],
   );
@@ -165,9 +209,79 @@ function App() {
 
   async function openOrder(id: string) {
     await perform(async () => {
-      const order = await requestJson<Order>(`${API}/api/orders/${id}`);
+      const [order, orderEvents] = await Promise.all([
+        requestJson<Order>(`${API}/api/orders/${id}`),
+        requestJson<OrderEvent[]>(`${API}/api/orders/${id}/events`),
+      ]);
       setSelected(order);
+      setEvents(orderEvents);
       setSelectedWorkers([...new Set(order.items.map((item) => item.assignedWorkerId).filter(isString))]);
+      setSection('orders');
+    });
+  }
+
+  async function reviewPickType(item: Item, pickType: 'PACKAGE' | 'PIECE') {
+    const rawQuantity = window.prompt('Количество для отбора', String(Number(item.pickQuantity) || 1));
+    if (rawQuantity == null) return;
+    const comment = window.prompt('Комментарий проверяющего');
+    if (!comment) return;
+    await perform(async () => {
+      const order = await requestJson<Order>(`${API}/api/order-items/${item.id}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pickType,
+          pickQuantity: Number(rawQuantity),
+          comment,
+          reviewedBy: 'Главный терминал',
+        }),
+      });
+      setSelected(order);
+      await refreshLists();
+    });
+  }
+
+  async function resolveItemProblem(item: Item, action: 'CONFIRM' | 'RETURN_TO_WORK') {
+    const comment = window.prompt(
+      action === 'CONFIRM' ? 'Комментарий к подтверждению' : 'Причина возврата в работу',
+    );
+    if (!comment) return;
+    const currentWorker = workers.find(
+      (worker) =>
+        worker.id === item.assignedWorkerId && worker.isActive && worker.shiftStatus !== 'OFF_SHIFT',
+    );
+    const workerId =
+      action === 'RETURN_TO_WORK'
+        ? (currentWorker?.id ?? workers.find((worker) => worker.shiftStatus === 'AVAILABLE')?.id)
+        : undefined;
+    if (action === 'RETURN_TO_WORK' && !workerId) {
+      setNotice('Нет доступного сборщика для возврата позиции.');
+      return;
+    }
+    await perform(async () => {
+      const order = await requestJson<Order>(`${API}/api/order-items/${item.id}/resolve-problem`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, comment, reviewedBy: 'Главный терминал', workerId }),
+      });
+      setSelected(order);
+      await refreshLists();
+    });
+  }
+
+  async function closeSelectedOrder() {
+    if (!selected) return;
+    await perform(async () => {
+      const order = await requestJson<Order>(`${API}/api/orders/${selected.id}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewedBy: 'Главный терминал', comment: 'Проверка завершена' }),
+      });
+      setSelected(order);
+      const orderEvents = await requestJson<OrderEvent[]>(`${API}/api/orders/${selected.id}/events`);
+      setEvents(orderEvents);
+      await refreshLists();
+      setNotice(`Заказ №${order.documentNumber} закрыт.`);
     });
   }
 
@@ -265,6 +379,20 @@ function App() {
             >
               Сборщики
             </button>
+            <button
+              className={section === 'problems' ? 'active' : ''}
+              onClick={() => setSection('problems')}
+              type="button"
+            >
+              Проблемы
+            </button>
+            <button
+              className={section === 'history' ? 'active' : ''}
+              onClick={() => setSection('history')}
+              type="button"
+            >
+              История
+            </button>
           </nav>
           <label className={`upload ${busy ? 'disabled' : ''}`}>
             {busy ? 'Выполняется…' : 'Загрузить XLSX'}
@@ -291,7 +419,7 @@ function App() {
         <Kpi label="Готово" value={stats.ready} tone="green" />
       </section>
 
-      {section === 'workers' ? (
+      {section === 'workers' && (
         <WorkersView
           workers={workers}
           form={workerForm}
@@ -300,7 +428,21 @@ function App() {
           onCreate={createNewWorker}
           onShift={setShift}
         />
-      ) : (
+      )}
+
+      {section === 'problems' && (
+        <ProblemsView
+          problems={problems}
+          busy={busy}
+          onOpen={openOrder}
+          onReview={reviewPickType}
+          onResolve={resolveItemProblem}
+        />
+      )}
+
+      {section === 'history' && <HistoryView orders={history} onOpen={openOrder} />}
+
+      {section === 'orders' && (
         <main>
           <section className="panel ordersPanel">
             <div className="panelTitle">
@@ -346,45 +488,71 @@ function App() {
 
                 <ProgressBar progress={selected.progress} />
 
-                {selected.status !== 'COMPLETED' && selected.status !== 'CLOSED' && (
-                  <section className="assignmentBox">
+                {['COMPLETED', 'REVIEW_REQUIRED', 'CLOSED'].includes(selected.status) && (
+                  <section className="completionBar">
                     <div>
-                      <p className="eyebrow">Распределение</p>
-                      <strong>Выберите активную смену</strong>
+                      <p className="eyebrow">Итоговые документы</p>
+                      <strong>{selected.status === 'CLOSED' ? 'Заказ закрыт' : 'Сборка завершена'}</strong>
                     </div>
-                    <div className="workerChecks">
-                      {selectableWorkers.map((worker) => (
-                        <label key={worker.id}>
-                          <input
-                            type="checkbox"
-                            checked={selectedWorkers.includes(worker.id)}
-                            onChange={() =>
-                              setSelectedWorkers((current) =>
-                                current.includes(worker.id)
-                                  ? current.filter((id) => id !== worker.id)
-                                  : [...current, worker.id],
-                              )
-                            }
-                          />
-                          <span>{worker.name}</span>
-                        </label>
-                      ))}
-                      {!selectableWorkers.length && (
-                        <small>Нет доступных сборщиков. Откройте раздел «Сборщики».</small>
-                      )}
-                    </div>
-                    <button
-                      className="primary"
-                      type="button"
-                      disabled={busy || !selectedWorkers.length}
-                      onClick={() => void assign()}
-                    >
-                      {selected.items.some((item) => item.assignedWorkerId)
-                        ? 'Перераспределить'
-                        : 'Распределить'}
-                    </button>
+                    <a href={`${API}/api/orders/${selected.id}/reports/short.pdf`}>Короткий PDF</a>
+                    <a href={`${API}/api/orders/${selected.id}/reports/full.pdf`}>Полный PDF</a>
+                    {selected.status !== 'CLOSED' && (
+                      <button
+                        className="primary"
+                        disabled={busy || attention.length > 0}
+                        onClick={() => void closeSelectedOrder()}
+                        type="button"
+                      >
+                        Закрыть заказ
+                      </button>
+                    )}
+                    {selected.status !== 'CLOSED' && attention.length > 0 && (
+                      <small>Для закрытия решите {attention.length} проблемных позиций.</small>
+                    )}
                   </section>
                 )}
+
+                {selected.status !== 'COMPLETED' &&
+                  selected.status !== 'CLOSED' &&
+                  selected.progress.completed < selected.progress.total && (
+                    <section className="assignmentBox">
+                      <div>
+                        <p className="eyebrow">Распределение</p>
+                        <strong>Выберите активную смену</strong>
+                      </div>
+                      <div className="workerChecks">
+                        {selectableWorkers.map((worker) => (
+                          <label key={worker.id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedWorkers.includes(worker.id)}
+                              onChange={() =>
+                                setSelectedWorkers((current) =>
+                                  current.includes(worker.id)
+                                    ? current.filter((id) => id !== worker.id)
+                                    : [...current, worker.id],
+                                )
+                              }
+                            />
+                            <span>{worker.name}</span>
+                          </label>
+                        ))}
+                        {!selectableWorkers.length && (
+                          <small>Нет доступных сборщиков. Откройте раздел «Сборщики».</small>
+                        )}
+                      </div>
+                      <button
+                        className="primary"
+                        type="button"
+                        disabled={busy || !selectedWorkers.length}
+                        onClick={() => void assign()}
+                      >
+                        {selected.items.some((item) => item.assignedWorkerId)
+                          ? 'Перераспределить'
+                          : 'Распределить'}
+                      </button>
+                    </section>
+                  )}
 
                 {attention.length > 0 && (
                   <section className="attentionBox">
@@ -410,14 +578,18 @@ function App() {
                         <ItemRow
                           key={item.id}
                           item={item}
-                          busy={busy}
+                          busy={busy || selected.status === 'CLOSED'}
                           onStatus={changeStatus}
                           onUndo={undo}
+                          onReview={reviewPickType}
+                          onResolve={resolveItemProblem}
                         />
                       ))}
                     </section>
                   ))}
                 </div>
+
+                <EventTimeline events={events} />
               </>
             ) : (
               <div className="empty">Выберите заказ слева или загрузите новый XLSX</div>
@@ -529,16 +701,166 @@ function WorkersView({
   );
 }
 
+function ProblemsView({
+  problems,
+  busy,
+  onOpen,
+  onReview,
+  onResolve,
+}: {
+  problems: Problem[];
+  busy: boolean;
+  onOpen: (id: string) => Promise<void>;
+  onReview: (item: Item, pickType: 'PACKAGE' | 'PIECE') => Promise<void>;
+  onResolve: (item: Item, action: 'CONFIRM' | 'RETURN_TO_WORK') => Promise<void>;
+}) {
+  return (
+    <section className="panel problemsPanel">
+      <div className="panelTitle">
+        <div>
+          <p className="eyebrow">Контроль качества</p>
+          <h2>Проблемы</h2>
+        </div>
+        <span>{problems.length}</span>
+      </div>
+      <div className="problemGrid">
+        {problems.map((problem) => (
+          <article className="problemCard" key={problem.id}>
+            <div className="problemOrder">
+              <button type="button" onClick={() => void onOpen(problem.order.id)}>
+                Заказ №{problem.order.documentNumber}
+              </button>
+              <Status value={problem.order.status} />
+            </div>
+            <h3>{problem.name}</h3>
+            <p>Штрихкод: {problem.barcode || 'не указан'}</p>
+            <div className="problemMeta">
+              <span>
+                {problem.pickType === 'REVIEW' ? 'Тип требует проверки' : `Статус: ${problem.status}`}
+              </span>
+              <span>{problem.assignedWorker?.name ?? 'Без сборщика'}</span>
+            </div>
+            <div className="problemActions">
+              {problem.pickType === 'REVIEW' && (
+                <>
+                  <button disabled={busy} onClick={() => void onReview(problem, 'PACKAGE')} type="button">
+                    УПАК
+                  </button>
+                  <button disabled={busy} onClick={() => void onReview(problem, 'PIECE')} type="button">
+                    ШТ
+                  </button>
+                </>
+              )}
+              {['NOT_FOUND', 'SKIPPED'].includes(problem.status) && (
+                <>
+                  <button
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => void onResolve(problem, 'CONFIRM')}
+                    type="button"
+                  >
+                    Подтвердить
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() => void onResolve(problem, 'RETURN_TO_WORK')}
+                    type="button"
+                  >
+                    Вернуть в работу
+                  </button>
+                </>
+              )}
+            </div>
+          </article>
+        ))}
+        {!problems.length && <div className="empty">Актуальных проблем нет</div>}
+      </div>
+    </section>
+  );
+}
+
+function HistoryView({ orders, onOpen }: { orders: OrderListItem[]; onOpen: (id: string) => Promise<void> }) {
+  return (
+    <section className="panel historyPanel">
+      <div className="panelTitle">
+        <div>
+          <p className="eyebrow">Архив операций</p>
+          <h2>История заказов</h2>
+        </div>
+        <span>{orders.length}</span>
+      </div>
+      <div className="historyTable">
+        {orders.map((order) => (
+          <button type="button" className="historyRow" key={order.id} onClick={() => void onOpen(order.id)}>
+            <strong>№{order.documentNumber}</strong>
+            <span>{new Date(order.documentDate).toLocaleDateString('ru-RU')}</span>
+            <span>{order.warehouse}</span>
+            <span>
+              {order.progress.completed}/{order.progress.total}
+            </span>
+            <Status value={order.status} />
+          </button>
+        ))}
+        {!orders.length && <div className="empty">Завершённых заказов пока нет</div>}
+      </div>
+    </section>
+  );
+}
+
+function EventTimeline({ events }: { events: OrderEvent[] }) {
+  const labels: Record<string, string> = {
+    ORDER_ASSIGNED: 'Заказ распределён',
+    ORDER_STARTED: 'Сборка начата',
+    ORDER_COMPLETED: 'Сборка завершена',
+    ITEM_ASSIGNED: 'Позиция назначена',
+    ITEM_REASSIGNED: 'Позиция передана',
+    ITEM_ACTIVE: 'Позиция начата',
+    ITEM_PICKED: 'Товар собран',
+    ITEM_NOT_FOUND: 'Товар не найден',
+    ITEM_SKIPPED: 'Позиция пропущена',
+    ITEM_UNDONE: 'Действие отменено',
+    ITEM_REVIEWED: 'Тип отбора проверен',
+    PROBLEM_CONFIRMED: 'Проблема подтверждена',
+    PROBLEM_RETURNED: 'Позиция возвращена в работу',
+    ORDER_CLOSED: 'Заказ закрыт',
+  };
+  return (
+    <section className="timeline">
+      <div className="panelTitle">
+        <div>
+          <p className="eyebrow">Неизменяемый журнал</p>
+          <h2>История действий</h2>
+        </div>
+        <span>{events.length}</span>
+      </div>
+      <div className="timelineList">
+        {events.slice(0, 40).map((event) => (
+          <div className="timelineEvent" key={event.id}>
+            <time>{new Date(event.serverAt).toLocaleString('ru-RU')}</time>
+            <strong>{labels[event.type] ?? event.type}</strong>
+            <span>{event.item?.name ?? event.worker?.name ?? 'Заказ'}</span>
+          </div>
+        ))}
+        {!events.length && <div className="empty compact">Событий пока нет</div>}
+      </div>
+    </section>
+  );
+}
+
 function ItemRow({
   item,
   busy,
   onStatus,
   onUndo,
+  onReview,
+  onResolve,
 }: {
   item: Item;
   busy: boolean;
   onStatus: (item: Item, status: Exclude<ItemStatus, 'PENDING' | 'ASSIGNED'>) => Promise<void>;
   onUndo: (item: Item) => Promise<void>;
+  onReview: (item: Item, pickType: 'PACKAGE' | 'PIECE') => Promise<void>;
+  onResolve: (item: Item, action: 'CONFIRM' | 'RETURN_TO_WORK') => Promise<void>;
 }) {
   return (
     <div className={`item item-${item.status.toLowerCase()}`}>
@@ -592,6 +914,31 @@ function ItemRow({
           <button className="ghost" disabled={busy} onClick={() => void onUndo(item)} type="button">
             Отменить
           </button>
+        )}
+        {item.pickType === 'REVIEW' && (
+          <>
+            <button disabled={busy} onClick={() => void onReview(item, 'PACKAGE')} type="button">
+              Это упаковки
+            </button>
+            <button disabled={busy} onClick={() => void onReview(item, 'PIECE')} type="button">
+              Это штуки
+            </button>
+          </>
+        )}
+        {['NOT_FOUND', 'SKIPPED'].includes(item.status) && item.problemResolution !== 'CONFIRMED' && (
+          <>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => void onResolve(item, 'CONFIRM')}
+              type="button"
+            >
+              Подтвердить проблему
+            </button>
+            <button disabled={busy} onClick={() => void onResolve(item, 'RETURN_TO_WORK')} type="button">
+              Вернуть в работу
+            </button>
+          </>
         )}
       </div>
     </div>

@@ -69,6 +69,25 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
     const importedOrder = imported.json<{ order: { id: string; items: unknown[] } }>().order;
     expect(importedOrder.items).toHaveLength(48);
 
+    const reviewTarget = importedOrder.items[1] as { id: string };
+    await db.orderItem.update({ where: { id: reviewTarget.id }, data: { pickType: 'REVIEW' } });
+    const reviewed = await app.inject({
+      method: 'PATCH',
+      url: `/api/order-items/${reviewTarget.id}/review`,
+      payload: {
+        pickType: 'PIECE',
+        pickQuantity: 7,
+        comment: 'Количество проверено по товару',
+        reviewedBy: 'Интеграционный тест',
+      },
+    });
+    expect(reviewed.statusCode).toBe(200);
+    expect(
+      reviewed
+        .json<{ items: Array<{ id: string; pickType: string; problemResolution: string | null }> }>()
+        .items.find((item) => item.id === reviewTarget.id),
+    ).toMatchObject({ pickType: 'PIECE', problemResolution: 'RESOLVED' });
+
     const rejected = await app.inject({
       method: 'POST',
       url: `/api/orders/${importedOrder.id}/assign`,
@@ -119,5 +138,82 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
     expect(eventTypes).toContain('ORDER_STARTED');
     expect(eventTypes).toContain('ORDER_COMPLETED');
     expect(eventTypes.filter((type) => type === 'ITEM_PICKED')).toHaveLength(48);
-  }, 120_000);
+
+    const problemItem = assignedOrder.items[0];
+    const undone = await app.inject({
+      method: 'POST',
+      url: `/api/order-items/${problemItem.id}/undo`,
+      payload: { workerId: problemItem.assignedWorkerId },
+    });
+    expect(undone.statusCode).toBe(200);
+    const notFound = await app.inject({
+      method: 'PATCH',
+      url: `/api/order-items/${problemItem.id}/status`,
+      payload: { status: 'NOT_FOUND', workerId: problemItem.assignedWorkerId },
+    });
+    expect(notFound.statusCode).toBe(200);
+    expect(notFound.json<{ status: string }>().status).toBe('REVIEW_REQUIRED');
+
+    const rejectedClose = await app.inject({
+      method: 'POST',
+      url: `/api/orders/${importedOrder.id}/close`,
+      payload: { reviewedBy: 'Интеграционный тест' },
+    });
+    expect(rejectedClose.statusCode).toBe(409);
+
+    const problems = await app.inject({ method: 'GET', url: `/api/problems?orderId=${importedOrder.id}` });
+    expect(problems.statusCode).toBe(200);
+    expect(problems.json<Array<{ id: string }>>()).toHaveLength(1);
+
+    const confirmed = await app.inject({
+      method: 'POST',
+      url: `/api/order-items/${problemItem.id}/resolve-problem`,
+      payload: {
+        action: 'CONFIRM',
+        comment: 'Фактическое отсутствие подтверждено',
+        reviewedBy: 'Интеграционный тест',
+      },
+    });
+    expect(confirmed.statusCode).toBe(200);
+
+    const closed = await app.inject({
+      method: 'POST',
+      url: `/api/orders/${importedOrder.id}/close`,
+      payload: { reviewedBy: 'Интеграционный тест', comment: 'Заказ проверен' },
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json<{ status: string; closedAt: string }>().status).toBe('CLOSED');
+    expect(closed.json<{ closedAt: string }>().closedAt).toBeTruthy();
+
+    const rejectedUndo = await app.inject({
+      method: 'POST',
+      url: `/api/order-items/${problemItem.id}/undo`,
+      payload: { workerId: problemItem.assignedWorkerId },
+    });
+    expect(rejectedUndo.statusCode).toBe(409);
+
+    const unresolved = await app.inject({ method: 'GET', url: `/api/problems?orderId=${importedOrder.id}` });
+    expect(unresolved.json<unknown[]>()).toHaveLength(0);
+    const history = await app.inject({ method: 'GET', url: '/api/orders/history?status=CLOSED&query=12293' });
+    expect(history.json<Array<{ id: string }>>().some((order) => order.id === importedOrder.id)).toBe(true);
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/orders/${importedOrder.id}/events?paginated=true&pageSize=100`,
+    });
+    expect(audit.statusCode).toBe(200);
+    expect(audit.json<{ items: Array<{ type: string }> }>().items.map((event) => event.type)).toContain(
+      'ORDER_CLOSED',
+    );
+
+    for (const kind of ['short', 'full']) {
+      const report = await app.inject({
+        method: 'GET',
+        url: `/api/orders/${importedOrder.id}/reports/${kind}.pdf`,
+      });
+      expect(report.statusCode).toBe(200);
+      expect(report.headers['content-type']).toContain('application/pdf');
+      expect(report.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(report.rawPayload.length).toBeGreaterThan(5_000);
+    }
+  }, 180_000);
 });
