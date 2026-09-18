@@ -70,6 +70,58 @@ type OrderEvent = {
   item: Pick<Item, 'id' | 'name' | 'sourceLine'> | null;
 };
 type ImportResponse = { duplicate: boolean; order: Order; warnings?: string[] };
+type ImportStatus = 'SUCCESS' | 'DUPLICATE' | 'FAILED';
+type ImportAttempt = {
+  id: string;
+  filename: string;
+  status: ImportStatus;
+  orderId: string | null;
+  documentNumber: string | null;
+  documentDate?: string | null;
+  warehouse?: string | null;
+  itemCount: number | null;
+  warnings?: unknown;
+  errorMessage: string | null;
+  createdAt: string;
+};
+type Dashboard = {
+  generatedAt: string;
+  orders: { new: number; inProgress: number; ready: number };
+  items: { problems: number };
+  workers: Record<ShiftStatus, number>;
+  imports: { failed24h: number; recent: ImportAttempt[] };
+  recentOrders: Array<{
+    id: string;
+    documentNumber: string;
+    documentDate: string;
+    warehouse: string;
+    status: OrderStatus;
+    createdAt: string;
+    itemCount: number;
+    completedCount: number;
+  }>;
+  attention: {
+    problems: Array<{
+      id: string;
+      name: string;
+      status: ItemStatus;
+      pickType: Item['pickType'];
+      updatedAt: string;
+      order: { id: string; documentNumber: string };
+    }>;
+  };
+};
+type PublicSettings = {
+  service: string;
+  version: string;
+  database: string;
+  acceptedFormats: string[];
+  maxUploadMb: number;
+  duplicateProtection: string[];
+  terminalUrl: string;
+  serverTime: string;
+};
+type Section = 'dashboard' | 'orders' | 'workers' | 'problems' | 'history' | 'settings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
@@ -85,11 +137,14 @@ function quantity(value: string | number | null): string {
 }
 
 function App() {
-  const [section, setSection] = useState<'orders' | 'workers' | 'problems' | 'history'>('orders');
+  const [section, setSection] = useState<Section>('dashboard');
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [history, setHistory] = useState<OrderListItem[]>([]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [imports, setImports] = useState<ImportAttempt[]>([]);
+  const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [events, setEvents] = useState<OrderEvent[]>([]);
   const [selected, setSelected] = useState<Order | null>(null);
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
@@ -98,17 +153,24 @@ function App() {
   const [workerForm, setWorkerForm] = useState({ name: '', login: '', password: '' });
 
   async function refreshLists() {
-    const [nextOrders, nextWorkers, nextProblems, nextHistory] = await Promise.all([
-      requestJson<OrderListItem[]>(`${API}/api/orders`),
-      requestJson<Worker[]>(`${API}/api/workers`),
-      requestJson<Problem[]>(`${API}/api/problems`),
-      requestJson<OrderListItem[]>(`${API}/api/orders/history`),
-    ]);
+    const [nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard, nextImports, nextSettings] =
+      await Promise.all([
+        requestJson<OrderListItem[]>(`${API}/api/orders`),
+        requestJson<Worker[]>(`${API}/api/workers`),
+        requestJson<Problem[]>(`${API}/api/problems`),
+        requestJson<OrderListItem[]>(`${API}/api/orders/history`),
+        requestJson<Dashboard>(`${API}/api/dashboard`),
+        requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
+        requestJson<PublicSettings>(`${API}/api/settings`),
+      ]);
     setOrders(nextOrders);
     setWorkers(nextWorkers);
     setProblems(nextProblems);
     setHistory(nextHistory);
-    return { nextOrders, nextWorkers, nextProblems, nextHistory };
+    setDashboard(nextDashboard);
+    setImports(nextImports);
+    setSettings(nextSettings);
+    return { nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard };
   }
 
   useEffect(() => {
@@ -117,34 +179,47 @@ function App() {
       requestJson<Worker[]>(`${API}/api/workers`),
       requestJson<Problem[]>(`${API}/api/problems`),
       requestJson<OrderListItem[]>(`${API}/api/orders/history`),
+      requestJson<Dashboard>(`${API}/api/dashboard`),
+      requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
+      requestJson<PublicSettings>(`${API}/api/settings`),
     ])
-      .then(([nextOrders, nextWorkers, nextProblems, nextHistory]) => {
-        setOrders(nextOrders);
-        setWorkers(nextWorkers);
-        setProblems(nextProblems);
-        setHistory(nextHistory);
-        const orderId = new URLSearchParams(window.location.search).get('order');
-        if (!orderId) return undefined;
-        return Promise.all([
-          requestJson<Order>(`${API}/api/orders/${orderId}`),
-          requestJson<OrderEvent[]>(`${API}/api/orders/${orderId}/events`),
-        ]).then(([order, orderEvents]) => {
-          setSelected(order);
-          setEvents(orderEvents);
-          setSelectedWorkers([...new Set(order.items.map((item) => item.assignedWorkerId).filter(isString))]);
-        });
-      })
+      .then(
+        ([nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard, nextImports, nextSettings]) => {
+          setOrders(nextOrders);
+          setWorkers(nextWorkers);
+          setProblems(nextProblems);
+          setHistory(nextHistory);
+          setDashboard(nextDashboard);
+          setImports(nextImports);
+          setSettings(nextSettings);
+          const orderId = new URLSearchParams(window.location.search).get('order');
+          if (!orderId) return undefined;
+          return Promise.all([
+            requestJson<Order>(`${API}/api/orders/${orderId}`),
+            requestJson<OrderEvent[]>(`${API}/api/orders/${orderId}/events`),
+          ]).then(([order, orderEvents]) => {
+            setSelected(order);
+            setEvents(orderEvents);
+            setSelectedWorkers([
+              ...new Set(order.items.map((item) => item.assignedWorkerId).filter(isString)),
+            ]);
+            setSection('orders');
+          });
+        },
+      )
       .catch((error) => setNotice(error instanceof Error ? error.message : 'API недоступен'));
   }, []);
 
   const stats = useMemo(
     () => ({
-      newOrders: orders.filter((order) => order.status === 'NEW').length,
-      picking: orders.filter((order) => ['ASSIGNED', 'PICKING'].includes(order.status)).length,
-      problems: problems.length,
-      ready: orders.filter((order) => ['COMPLETED', 'CLOSED'].includes(order.status)).length,
+      newOrders: dashboard?.orders.new ?? orders.filter((order) => order.status === 'NEW').length,
+      picking:
+        dashboard?.orders.inProgress ??
+        orders.filter((order) => ['ASSIGNED', 'PICKING'].includes(order.status)).length,
+      problems: dashboard?.items.problems ?? problems.length,
+      ready: dashboard?.orders.ready ?? orders.filter((order) => order.status === 'COMPLETED').length,
     }),
-    [orders, problems],
+    [dashboard, orders, problems],
   );
 
   const groups = useMemo(() => {
@@ -183,6 +258,11 @@ function App() {
       await action();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Операция не выполнена');
+      try {
+        await refreshLists();
+      } catch {
+        // Сохраняем исходную ошибку операции, если API полностью недоступен.
+      }
     } finally {
       setBusy(false);
     }
@@ -366,6 +446,13 @@ function App() {
         <div className="headerActions">
           <nav className="tabs" aria-label="Разделы терминала">
             <button
+              className={section === 'dashboard' ? 'active' : ''}
+              onClick={() => setSection('dashboard')}
+              type="button"
+            >
+              Главная
+            </button>
+            <button
               className={section === 'orders' ? 'active' : ''}
               onClick={() => setSection('orders')}
               type="button"
@@ -393,6 +480,13 @@ function App() {
             >
               История
             </button>
+            <button
+              className={section === 'settings' ? 'active' : ''}
+              onClick={() => setSection('settings')}
+              type="button"
+            >
+              Настройки
+            </button>
           </nav>
           <label className={`upload ${busy ? 'disabled' : ''}`}>
             {busy ? 'Выполняется…' : 'Загрузить XLSX'}
@@ -419,6 +513,12 @@ function App() {
         <Kpi label="Готово" value={stats.ready} tone="green" />
       </section>
 
+      {section === 'dashboard' && dashboard && (
+        <DashboardView dashboard={dashboard} onOpen={openOrder} onSection={setSection} />
+      )}
+
+      {section === 'dashboard' && !dashboard && <div className="empty">Загрузка сводки терминала…</div>}
+
       {section === 'workers' && (
         <WorkersView
           workers={workers}
@@ -441,6 +541,10 @@ function App() {
       )}
 
       {section === 'history' && <HistoryView orders={history} onOpen={openOrder} />}
+
+      {section === 'settings' && (
+        <SettingsView settings={settings} imports={imports} apiUrl={API} onOpen={openOrder} />
+      )}
 
       {section === 'orders' && (
         <main>
@@ -599,6 +703,218 @@ function App() {
       )}
     </div>
   );
+}
+
+function DashboardView({
+  dashboard,
+  onOpen,
+  onSection,
+}: {
+  dashboard: Dashboard;
+  onOpen: (id: string) => Promise<void>;
+  onSection: (section: Section) => void;
+}) {
+  const failedImports = dashboard.imports.recent.filter((item) => item.status === 'FAILED');
+  return (
+    <section className="dashboardGrid">
+      <div className="panel dashboardOrders">
+        <div className="panelTitle">
+          <div>
+            <p className="eyebrow">Сегодня в работе</p>
+            <h2>Текущие заказы</h2>
+          </div>
+          <button className="textButton" onClick={() => onSection('orders')} type="button">
+            Все заказы
+          </button>
+        </div>
+        <div className="dashboardOrderList">
+          {dashboard.recentOrders.map((order) => {
+            const percent = order.itemCount ? Math.round((order.completedCount / order.itemCount) * 100) : 0;
+            return (
+              <button key={order.id} type="button" onClick={() => void onOpen(order.id)}>
+                <span>
+                  <strong>№{order.documentNumber}</strong>
+                  <small>{order.warehouse}</small>
+                </span>
+                <span className="dashboardProgress">
+                  <i style={{ width: `${percent}%` }} />
+                </span>
+                <b>{percent}%</b>
+                <Status value={order.status} />
+              </button>
+            );
+          })}
+          {!dashboard.recentOrders.length && <div className="empty compact">Нет открытых заказов</div>}
+        </div>
+      </div>
+
+      <div className="dashboardSide">
+        <section className="panel shiftPanel">
+          <div className="panelTitle">
+            <div>
+              <p className="eyebrow">Смена</p>
+              <h2>Сборщики</h2>
+            </div>
+            <button className="textButton" onClick={() => onSection('workers')} type="button">
+              Управление
+            </button>
+          </div>
+          <div className="shiftNumbers">
+            <div>
+              <strong>{dashboard.workers.AVAILABLE}</strong>
+              <span>доступны</span>
+            </div>
+            <div>
+              <strong>{dashboard.workers.BUSY}</strong>
+              <span>заняты</span>
+            </div>
+            <div>
+              <strong>{dashboard.workers.OFF_SHIFT}</strong>
+              <span>вне смены</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel focusPanel">
+          <div className="panelTitle">
+            <div>
+              <p className="eyebrow">Контроль</p>
+              <h2>Требует внимания</h2>
+            </div>
+            <span>{dashboard.items.problems + dashboard.imports.failed24h}</span>
+          </div>
+          <div className="focusList">
+            {dashboard.attention.problems.map((problem) => (
+              <button key={problem.id} type="button" onClick={() => void onOpen(problem.order.id)}>
+                <span className="focusMark">Позиция</span>
+                <strong>{problem.name}</strong>
+                <small>Заказ №{problem.order.documentNumber}</small>
+              </button>
+            ))}
+            {failedImports.map((attempt) => (
+              <button key={attempt.id} type="button" onClick={() => onSection('settings')}>
+                <span className="focusMark error">Импорт</span>
+                <strong>{attempt.filename}</strong>
+                <small>{attempt.errorMessage}</small>
+              </button>
+            ))}
+            {!dashboard.attention.problems.length && !failedImports.length && (
+              <div className="allClear">
+                <strong>Очередь чистая</strong>
+                <span>Проблемных позиций и ошибок импорта нет.</span>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function SettingsView({
+  settings,
+  imports,
+  apiUrl,
+  onOpen,
+}: {
+  settings: PublicSettings | null;
+  imports: ImportAttempt[];
+  apiUrl: string;
+  onOpen: (id: string) => Promise<void>;
+}) {
+  return (
+    <section className="settingsGrid">
+      <div className="panel systemPanel">
+        <div className="panelTitle">
+          <div>
+            <p className="eyebrow">Диагностика</p>
+            <h2>Настройки терминала</h2>
+          </div>
+          <span className="healthDot" title="Сервис доступен" />
+        </div>
+        {settings ? (
+          <dl className="settingsList">
+            <div>
+              <dt>Backend</dt>
+              <dd>{apiUrl}</dd>
+            </div>
+            <div>
+              <dt>PostgreSQL</dt>
+              <dd>{settings.database === 'connected' ? 'Подключена' : settings.database}</dd>
+            </div>
+            <div>
+              <dt>Версия</dt>
+              <dd>{settings.version}</dd>
+            </div>
+            <div>
+              <dt>Формат загрузки</dt>
+              <dd>
+                {settings.acceptedFormats.join(', ')}, до {settings.maxUploadMb} МБ
+              </dd>
+            </div>
+            <div>
+              <dt>Защита от дублей</dt>
+              <dd>{settings.duplicateProtection.join(' + ')}</dd>
+            </div>
+            <div>
+              <dt>Публичный терминал</dt>
+              <dd>{settings.terminalUrl}</dd>
+            </div>
+            <div>
+              <dt>Время сервера</dt>
+              <dd>{new Date(settings.serverTime).toLocaleString('ru-RU')}</dd>
+            </div>
+          </dl>
+        ) : (
+          <div className="empty compact">Настройки сервиса недоступны</div>
+        )}
+        <p className="settingsHint">
+          Секреты и параметры подключения к базе не передаются в браузер. Изменяемые параметры задаются через
+          переменные окружения сервера.
+        </p>
+      </div>
+
+      <div className="panel importsPanel">
+        <div className="panelTitle">
+          <div>
+            <p className="eyebrow">Аудит загрузок</p>
+            <h2>Последние импорты</h2>
+          </div>
+          <span>{imports.length}</span>
+        </div>
+        <div className="importList">
+          {imports.map((attempt) => (
+            <button
+              key={attempt.id}
+              type="button"
+              disabled={!attempt.orderId}
+              onClick={() => attempt.orderId && void onOpen(attempt.orderId)}
+            >
+              <ImportStatusBadge value={attempt.status} />
+              <span>
+                <strong>{attempt.filename}</strong>
+                <small>
+                  {attempt.errorMessage ??
+                    `Заказ №${attempt.documentNumber ?? '—'} · ${attempt.itemCount ?? 0} позиций`}
+                </small>
+              </span>
+              <time>{new Date(attempt.createdAt).toLocaleString('ru-RU')}</time>
+            </button>
+          ))}
+          {!imports.length && <div className="empty compact">Импортов пока не было</div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ImportStatusBadge({ value }: { value: ImportStatus }) {
+  const labels: Record<ImportStatus, string> = {
+    SUCCESS: 'Загружен',
+    DUPLICATE: 'Дубль',
+    FAILED: 'Ошибка',
+  };
+  return <span className={`importStatus import-${value}`}>{labels[value]}</span>;
 }
 
 function WorkersView({

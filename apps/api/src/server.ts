@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
@@ -7,8 +6,8 @@ import { Prisma } from '@prisma/client';
 import Fastify from 'fastify';
 import { ZodError, z } from 'zod';
 import { db } from './db.js';
-import type { ParsedOrder } from './modules/orders/types.js';
-import { parseOrderXlsx } from './modules/orders/xlsxParser.js';
+import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
+import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modules/orders/importService.js';
 import { createOrderReport } from './modules/reports/reportService.js';
 import {
   closeOrder,
@@ -103,6 +102,10 @@ const eventQuerySchema = z.object({
   itemId: z.string().optional(),
   paginated: z.enum(['true', 'false']).optional(),
 });
+const importQuerySchema = z.object({
+  status: z.enum(['SUCCESS', 'DUPLICATE', 'FAILED']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
 
 export async function buildApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -136,60 +139,19 @@ export async function buildApp() {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'Файл не передан' });
     if (!file.filename.toLowerCase().endsWith('.xlsx')) {
+      await recordImportFailure(file.filename, 'Нужен файл .xlsx');
       return reply.code(400).send({ error: 'Нужен файл .xlsx' });
     }
 
-    const buffer = await file.toBuffer();
-    const sourceHash = crypto.createHash('sha256').update(buffer).digest('hex');
-    const existingByHash = await db.order.findUnique({ where: { sourceHash } });
-    if (existingByHash) {
-      return reply.code(200).send({ duplicate: true, order: await getOrderDetails(existingByHash.id) });
-    }
-
-    let parsed: ParsedOrder;
-    try {
-      parsed = await parseOrderXlsx(buffer);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'неизвестная ошибка';
-      return reply.code(400).send({ error: `Ошибка импорта XLSX: ${reason}` });
-    }
-    const documentDate = new Date(`${parsed.documentDate}T00:00:00.000Z`);
-
-    const existing = await db.order.findFirst({
-      where: { documentNumber: parsed.documentNumber, documentDate, warehouse: parsed.warehouse },
-    });
-    if (existing) return reply.code(200).send({ duplicate: true, order: await getOrderDetails(existing.id) });
-
-    const order = await db.order.create({
-      data: {
-        documentNumber: parsed.documentNumber,
-        documentDate,
-        warehouse: parsed.warehouse,
-        sourceHash,
-        status: parsed.warnings.length ? 'REVIEW_REQUIRED' : 'NEW',
-        items: {
-          create: parsed.items.map((item) => ({
-            sourceLine: item.sourceLine,
-            barcode: item.barcode,
-            name: item.name,
-            groupKey: item.groupKey,
-            packageQuantity: item.packageQuantity,
-            pieceQuantity: item.pieceQuantity,
-            pickType: item.pickType,
-            pickQuantity: item.pickQuantity,
-            sortIndex: item.sortIndex,
-          })),
-        },
-      },
-    });
-
-    return reply.code(201).send({
-      duplicate: false,
-      warnings: parsed.warnings,
-      order: await getOrderDetails(order.id),
-    });
+    const result = await importOrderXlsx(file.filename, await file.toBuffer());
+    return reply.code(result.duplicate ? 200 : 201).send(result);
   });
 
+  app.get('/api/dashboard', getDashboard);
+  app.get('/api/settings', getPublicSettings);
+  app.get<{ Querystring: unknown }>('/api/imports', async (request) =>
+    listImportAttempts(importQuerySchema.parse(request.query)),
+  );
   app.get('/api/orders', listOrdersWithProgress);
   app.get<{ Querystring: unknown }>('/api/orders/history', async (request) => {
     const query = historyQuerySchema.parse(request.query);

@@ -60,6 +60,12 @@ enum EventType {
   ORDER_CLOSED
 }
 
+enum ImportStatus {
+  SUCCESS
+  DUPLICATE
+  FAILED
+}
+
 model Order {
   id             String       @id @default(cuid())
   documentNumber String
@@ -74,8 +80,29 @@ model Order {
   updatedAt      DateTime     @updatedAt
   items          OrderItem[]
   events         OrderEvent[]
+  importAttempts ImportAttempt[]
 
   @@unique([documentNumber, documentDate, warehouse])
+}
+
+model ImportAttempt {
+  id             String       @id @default(cuid())
+  filename       String
+  sourceHash     String?
+  status         ImportStatus
+  orderId        String?
+  documentNumber String?
+  documentDate   DateTime?    @db.Date
+  warehouse      String?
+  itemCount      Int?
+  warnings       Json?
+  errorMessage   String?
+  createdAt      DateTime     @default(now())
+  order          Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([sourceHash])
+  @@index([orderId])
 }
 
 model OrderItem {
