@@ -239,6 +239,27 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
     expect(unresolved.json<unknown[]>()).toHaveLength(0);
     const history = await app.inject({ method: 'GET', url: '/api/orders/history?status=CLOSED&query=12293' });
     expect(history.json<Array<{ id: string }>>().some((order) => order.id === importedOrder.id)).toBe(true);
+    const analytics = await app.inject({ method: 'GET', url: '/api/analytics?days=30' });
+    expect(analytics.statusCode).toBe(200);
+    const analyticsData = analytics.json<{
+      daily: unknown[];
+      summary: { handled: number; picked: number; notFound: number };
+      workers: Array<{ name: string; handled: number }>;
+    }>();
+    expect(analyticsData.daily).toHaveLength(30);
+    expect(analyticsData.summary.handled).toBeGreaterThanOrEqual(48);
+    expect(analyticsData.summary.picked).toBeGreaterThanOrEqual(47);
+    expect(analyticsData.summary.notFound).toBeGreaterThanOrEqual(1);
+    expect(
+      analyticsData.workers
+        .filter((worker) => worker.name.startsWith('Тестовый сборщик'))
+        .reduce((sum, worker) => sum + worker.handled, 0),
+    ).toBe(48);
+    expect(analytics.body).not.toContain('passwordHash');
+
+    const invalidAnalytics = await app.inject({ method: 'GET', url: '/api/analytics?days=14' });
+    expect(invalidAnalytics.statusCode).toBe(400);
+
     const audit = await app.inject({
       method: 'GET',
       url: `/api/orders/${importedOrder.id}/events?paginated=true&pageSize=100`,

@@ -111,6 +111,38 @@ type Dashboard = {
     }>;
   };
 };
+type AnalyticsDays = 7 | 30 | 90;
+type Analytics = {
+  generatedAt: string;
+  period: { days: AnalyticsDays; from: string; to: string };
+  summary: {
+    ordersCreated: number;
+    ordersCompleted: number;
+    ordersClosed: number;
+    handled: number;
+    picked: number;
+    notFound: number;
+    skipped: number;
+    successRate: number;
+    averageCycleMinutes: number | null;
+  };
+  daily: Array<{
+    date: string;
+    ordersCreated: number;
+    ordersCompleted: number;
+    picked: number;
+    problems: number;
+  }>;
+  workers: Array<{
+    id: string;
+    name: string;
+    handled: number;
+    picked: number;
+    notFound: number;
+    skipped: number;
+    successRate: number;
+  }>;
+};
 type PublicSettings = {
   service: string;
   version: string;
@@ -121,7 +153,7 @@ type PublicSettings = {
   terminalUrl: string;
   serverTime: string;
 };
-type Section = 'dashboard' | 'orders' | 'workers' | 'problems' | 'history' | 'settings';
+type Section = 'dashboard' | 'orders' | 'workers' | 'problems' | 'history' | 'analytics' | 'settings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
@@ -143,6 +175,8 @@ function App() {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [history, setHistory] = useState<OrderListItem[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [analyticsDays, setAnalyticsDays] = useState<AnalyticsDays>(30);
   const [imports, setImports] = useState<ImportAttempt[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [events, setEvents] = useState<OrderEvent[]>([]);
@@ -153,21 +187,31 @@ function App() {
   const [workerForm, setWorkerForm] = useState({ name: '', login: '', password: '' });
 
   async function refreshLists() {
-    const [nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard, nextImports, nextSettings] =
-      await Promise.all([
-        requestJson<OrderListItem[]>(`${API}/api/orders`),
-        requestJson<Worker[]>(`${API}/api/workers`),
-        requestJson<Problem[]>(`${API}/api/problems`),
-        requestJson<OrderListItem[]>(`${API}/api/orders/history`),
-        requestJson<Dashboard>(`${API}/api/dashboard`),
-        requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
-        requestJson<PublicSettings>(`${API}/api/settings`),
-      ]);
+    const [
+      nextOrders,
+      nextWorkers,
+      nextProblems,
+      nextHistory,
+      nextDashboard,
+      nextAnalytics,
+      nextImports,
+      nextSettings,
+    ] = await Promise.all([
+      requestJson<OrderListItem[]>(`${API}/api/orders`),
+      requestJson<Worker[]>(`${API}/api/workers`),
+      requestJson<Problem[]>(`${API}/api/problems`),
+      requestJson<OrderListItem[]>(`${API}/api/orders/history`),
+      requestJson<Dashboard>(`${API}/api/dashboard`),
+      requestJson<Analytics>(`${API}/api/analytics?days=${analyticsDays}`),
+      requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
+      requestJson<PublicSettings>(`${API}/api/settings`),
+    ]);
     setOrders(nextOrders);
     setWorkers(nextWorkers);
     setProblems(nextProblems);
     setHistory(nextHistory);
     setDashboard(nextDashboard);
+    setAnalytics(nextAnalytics);
     setImports(nextImports);
     setSettings(nextSettings);
     return { nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard };
@@ -180,16 +224,27 @@ function App() {
       requestJson<Problem[]>(`${API}/api/problems`),
       requestJson<OrderListItem[]>(`${API}/api/orders/history`),
       requestJson<Dashboard>(`${API}/api/dashboard`),
+      requestJson<Analytics>(`${API}/api/analytics?days=30`),
       requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
       requestJson<PublicSettings>(`${API}/api/settings`),
     ])
       .then(
-        ([nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard, nextImports, nextSettings]) => {
+        ([
+          nextOrders,
+          nextWorkers,
+          nextProblems,
+          nextHistory,
+          nextDashboard,
+          nextAnalytics,
+          nextImports,
+          nextSettings,
+        ]) => {
           setOrders(nextOrders);
           setWorkers(nextWorkers);
           setProblems(nextProblems);
           setHistory(nextHistory);
           setDashboard(nextDashboard);
+          setAnalytics(nextAnalytics);
           setImports(nextImports);
           setSettings(nextSettings);
           const orderId = new URLSearchParams(window.location.search).get('order');
@@ -284,6 +339,14 @@ function App() {
           ? `Заказ №${result.order.documentNumber} уже существует и открыт.`
           : `Заказ №${result.order.documentNumber} импортирован: ${result.order.items.length} позиций.`,
       );
+    });
+  }
+
+  async function changeAnalyticsPeriod(days: AnalyticsDays) {
+    await perform(async () => {
+      const nextAnalytics = await requestJson<Analytics>(`${API}/api/analytics?days=${days}`);
+      setAnalyticsDays(days);
+      setAnalytics(nextAnalytics);
     });
   }
 
@@ -481,6 +544,13 @@ function App() {
               История
             </button>
             <button
+              className={section === 'analytics' ? 'active' : ''}
+              onClick={() => setSection('analytics')}
+              type="button"
+            >
+              Аналитика
+            </button>
+            <button
               className={section === 'settings' ? 'active' : ''}
               onClick={() => setSection('settings')}
               type="button"
@@ -541,6 +611,15 @@ function App() {
       )}
 
       {section === 'history' && <HistoryView orders={history} onOpen={openOrder} />}
+
+      {section === 'analytics' && (
+        <AnalyticsView
+          analytics={analytics}
+          days={analyticsDays}
+          busy={busy}
+          onDays={changeAnalyticsPeriod}
+        />
+      )}
 
       {section === 'settings' && (
         <SettingsView settings={settings} imports={imports} apiUrl={API} onOpen={openOrder} />
@@ -809,6 +888,199 @@ function DashboardView({
       </div>
     </section>
   );
+}
+
+function AnalyticsView({
+  analytics,
+  days,
+  busy,
+  onDays,
+}: {
+  analytics: Analytics | null;
+  days: AnalyticsDays;
+  busy: boolean;
+  onDays: (days: AnalyticsDays) => Promise<void>;
+}) {
+  if (!analytics) return <div className="empty">Загрузка аналитики…</div>;
+
+  const maxActivity = Math.max(1, ...analytics.daily.map((entry) => entry.picked + entry.problems));
+  const hasActivity = analytics.summary.handled > 0 || analytics.summary.ordersCreated > 0;
+  const labelStep = days === 7 ? 1 : days === 30 ? 5 : 15;
+
+  return (
+    <section className="analyticsPage">
+      <div className="analyticsHeading">
+        <div>
+          <p className="eyebrow">Результат смены</p>
+          <h2>Аналитика склада</h2>
+          <p>
+            {new Date(analytics.period.from).toLocaleDateString('ru-RU')} —{' '}
+            {new Date(analytics.period.to).toLocaleDateString('ru-RU')}
+          </p>
+        </div>
+        <fieldset className="periodSwitch">
+          <legend className="srOnly">Период аналитики</legend>
+          {([7, 30, 90] as const).map((value) => (
+            <button
+              className={days === value ? 'active' : ''}
+              disabled={busy}
+              key={value}
+              onClick={() => void onDays(value)}
+              type="button"
+            >
+              {value} дней
+            </button>
+          ))}
+        </fieldset>
+      </div>
+
+      <div className="analyticsKpis">
+        <article>
+          <span>Создано заказов</span>
+          <strong>{analytics.summary.ordersCreated}</strong>
+          <small>{analytics.summary.ordersClosed} закрыто</small>
+        </article>
+        <article>
+          <span>Обработано позиций</span>
+          <strong>{analytics.summary.handled}</strong>
+          <small>{analytics.summary.picked} собрано</small>
+        </article>
+        <article>
+          <span>Успешная сборка</span>
+          <strong>{formatPercent(analytics.summary.successRate)}</strong>
+          <small>{analytics.summary.notFound + analytics.summary.skipped} проблем</small>
+        </article>
+        <article>
+          <span>Среднее время</span>
+          <strong>{formatDuration(analytics.summary.averageCycleMinutes)}</strong>
+          <small>{analytics.summary.ordersCompleted} завершено</small>
+        </article>
+      </div>
+
+      <div className="analyticsGrid">
+        <section className="panel trendPanel">
+          <div className="panelTitle">
+            <div>
+              <p className="eyebrow">По дням</p>
+              <h2>Темп обработки</h2>
+            </div>
+            <div className="chartLegend">
+              <span className="pickedLegend">Собрано</span>
+              <span className="problemLegend">Проблемы</span>
+            </div>
+          </div>
+          {hasActivity ? (
+            <div className="trendScroll">
+              <div className={`trendChart range-${days}`}>
+                {analytics.daily.map((entry, index) => {
+                  const pickedHeight = (entry.picked / maxActivity) * 100;
+                  const problemHeight = (entry.problems / maxActivity) * 100;
+                  const showLabel = index % labelStep === 0 || index === analytics.daily.length - 1;
+                  return (
+                    <div
+                      className="trendDay"
+                      key={entry.date}
+                      title={`${entry.date}: ${entry.picked} собрано`}
+                    >
+                      <div className="trendBars">
+                        <i className="problemBar" style={{ height: `${problemHeight}%` }} />
+                        <i className="pickedBar" style={{ height: `${pickedHeight}%` }} />
+                      </div>
+                      <span>
+                        {showLabel
+                          ? new Date(`${entry.date}T00:00:00Z`).toLocaleDateString('ru-RU', {
+                              day: '2-digit',
+                              month: '2-digit',
+                            })
+                          : ''}
+                      </span>
+                      {(entry.ordersCreated > 0 || entry.ordersCompleted > 0) && (
+                        <small>
+                          созд. {entry.ordersCreated} / зав. {entry.ordersCompleted}
+                        </small>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="empty compact">За выбранный период операций ещё не было</div>
+          )}
+        </section>
+
+        <section className="panel outcomePanel">
+          <p className="eyebrow">Качество</p>
+          <h2>Итоги позиций</h2>
+          <div
+            className="outcomeRing"
+            style={{ '--rate': `${analytics.summary.successRate * 3.6}deg` } as React.CSSProperties}
+          >
+            <strong>{formatPercent(analytics.summary.successRate)}</strong>
+            <span>собрано</span>
+          </div>
+          <dl className="outcomeList">
+            <div>
+              <dt>Собрано</dt>
+              <dd>{analytics.summary.picked}</dd>
+            </div>
+            <div>
+              <dt>Не найдено</dt>
+              <dd>{analytics.summary.notFound}</dd>
+            </div>
+            <div>
+              <dt>Пропущено</dt>
+              <dd>{analytics.summary.skipped}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <section className="panel workerAnalytics">
+        <div className="panelTitle">
+          <div>
+            <p className="eyebrow">Команда</p>
+            <h2>Результаты сборщиков</h2>
+          </div>
+          <span>{analytics.workers.length}</span>
+        </div>
+        <div className="workerAnalyticsTable">
+          <div className="workerAnalyticsHead">
+            <span>Сборщик</span>
+            <span>Обработано</span>
+            <span>Собрано</span>
+            <span>Проблемы</span>
+            <span>Успех</span>
+          </div>
+          {analytics.workers.map((worker) => (
+            <div className="workerAnalyticsRow" key={worker.id}>
+              <strong>{worker.name}</strong>
+              <span>{worker.handled}</span>
+              <span>{worker.picked}</span>
+              <span>{worker.notFound + worker.skipped}</span>
+              <span className="workerRate">
+                <i style={{ width: `${worker.successRate}%` }} />
+                <b>{formatPercent(worker.successRate)}</b>
+              </span>
+            </div>
+          ))}
+          {!analytics.workers.length && <div className="empty compact">Нет действий сборщиков за период</div>}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function formatPercent(value: number) {
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function formatDuration(minutes: number | null) {
+  if (minutes == null) return '—';
+  if (minutes < 60) return `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
 }
 
 function SettingsView({
