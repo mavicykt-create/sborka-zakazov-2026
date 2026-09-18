@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseVoiceCommand } from '../../admin/src/voice/commandParser';
+import { canExecuteVoiceCommand, parseVoiceCommand } from '../../admin/src/voice/commandParser';
+import {
+  configurePausedRecognition,
+  type SpeechRecognitionAdapter,
+} from '../../admin/src/voice/speechRecognition';
 import { buildItemSpeech, buildQuantitySpeech } from '../../admin/src/voice/speechSynthesis';
 
 describe('parseVoiceCommand', () => {
@@ -19,6 +23,47 @@ describe('parseVoiceCommand', () => {
     ['дальше', 'UNKNOWN'],
   ] as const)('maps %s to %s', (transcript, command) => {
     expect(parseVoiceCommand(transcript)).toBe(command);
+  });
+});
+
+describe('paused voice command gate', () => {
+  it('accepts only CONTINUE while paused', () => {
+    expect(canExecuteVoiceCommand('CONTINUE', true)).toBe(true);
+    for (const command of [
+      'TAKE',
+      'REPEAT',
+      'QUANTITY',
+      'NOT_FOUND',
+      'SKIP',
+      'UNDO',
+      'REMAINING',
+      'PAUSE',
+      'UNKNOWN',
+    ] as const) {
+      expect(canExecuteVoiceCommand(command, true)).toBe(false);
+    }
+  });
+
+  it('allows normal commands after resuming', () => {
+    expect(canExecuteVoiceCommand('TAKE', false)).toBe(true);
+    expect(canExecuteVoiceCommand('SKIP', false)).toBe(true);
+    expect(canExecuteVoiceCommand('NOT_FOUND', false)).toBe(true);
+  });
+
+  it('keeps recognition active for CONTINUE and stops it only when voice is disabled', () => {
+    const calls: string[] = [];
+    const recognition: SpeechRecognitionAdapter = {
+      supported: true,
+      start: () => calls.push('start'),
+      stop: () => calls.push('stop'),
+      destroy: () => calls.push('destroy'),
+    };
+
+    configurePausedRecognition(recognition, true);
+    expect(calls).toEqual(['start']);
+
+    configurePausedRecognition(recognition, false);
+    expect(calls).toEqual(['start', 'stop']);
   });
 });
 

@@ -34,3 +34,7 @@ export function normalizeTranscript(transcript: string) {
 export function parseVoiceCommand(transcript: string): VoiceCommand {
   return commands[normalizeTranscript(transcript)] ?? 'UNKNOWN';
 }
+
+export function canExecuteVoiceCommand(command: VoiceCommand, paused: boolean) {
+  return !paused || command === 'CONTINUE';
+}

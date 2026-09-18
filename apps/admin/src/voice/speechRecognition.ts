@@ -45,6 +45,14 @@ export type SpeechRecognitionAdapter = {
   destroy(): void;
 };
 
+export function configurePausedRecognition(
+  recognition: SpeechRecognitionAdapter | null,
+  voiceEnabled: boolean,
+) {
+  if (voiceEnabled) recognition?.start();
+  else recognition?.stop();
+}
+
 export function createSpeechRecognition(options: RecognitionOptions): SpeechRecognitionAdapter {
   const Constructor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
   if (!Constructor) {

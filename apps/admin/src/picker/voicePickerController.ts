@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type SoundName, SoundPlayer } from '../audio/soundPlayer';
-import { parseVoiceCommand, type VoiceCommand } from '../voice/commandParser';
-import { createSpeechRecognition, type SpeechRecognitionAdapter } from '../voice/speechRecognition';
+import { canExecuteVoiceCommand, parseVoiceCommand, type VoiceCommand } from '../voice/commandParser';
+import {
+  configurePausedRecognition,
+  createSpeechRecognition,
+  type SpeechRecognitionAdapter,
+} from '../voice/speechRecognition';
 import {
   buildItemSpeech,
   buildQuantitySpeech,
@@ -179,10 +183,11 @@ export function useVoicePickerController(options: VoicePickerOptions) {
 
   const pause = useCallback(() => {
     pausedRef.current = true;
-    recognitionRef.current?.stop();
     synthesizerRef.current.cancel();
     speakingRef.current = false;
     setMicState('paused');
+    // Keep a resume-only listener alive; the command gate rejects every command except CONTINUE.
+    configurePausedRecognition(recognitionRef.current, enabledRef.current);
   }, []);
 
   const resume = useCallback(async () => {
@@ -214,7 +219,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
     async (command: VoiceCommand, transcript: string) => {
       setLastTranscript(transcript.trim());
       if (inFlightRef.current) return;
-      if (pausedRef.current && command !== 'CONTINUE') return;
+      if (!canExecuteVoiceCommand(command, pausedRef.current)) return;
 
       switch (command) {
         case 'TAKE':
@@ -305,7 +310,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
     soundsEnabled,
     recognitionSupported,
     micState,
-    micLabel: micLabels[micState],
+    micLabel: micState === 'paused' && voiceEnabled ? 'Пауза · жду «Продолжить»' : micLabels[micState],
     lastTranscript,
     voiceError,
     toggleVoice,
