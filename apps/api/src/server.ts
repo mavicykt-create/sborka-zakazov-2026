@@ -1,10 +1,13 @@
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import { Prisma } from '@prisma/client';
 import Fastify from 'fastify';
 import { ZodError, z } from 'zod';
+import { validateProductionEnvironment } from './config.js';
 import { db } from './db.js';
 import { getAnalytics } from './modules/analytics/analyticsService.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
@@ -139,7 +142,20 @@ const pickerSpeechSchema = z.object({ text: z.string() }).strict();
 type BuildAppOptions = {
   speechKitService?: YandexSpeechKitService;
   authenticatePicker?: typeof authenticatePicker;
+  frontendRoot?: string | false;
 };
+
+export const DEFAULT_FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../admin/dist');
+
+function isBackendPath(url: string): boolean {
+  const pathname = url.split('?')[0];
+  return (
+    pathname === '/api' ||
+    pathname.startsWith('/api/') ||
+    pathname === '/health' ||
+    pathname.startsWith('/health/')
+  );
+}
 
 export async function buildApp(options: BuildAppOptions = {}) {
   const speechKitService = options.speechKitService ?? new YandexSpeechKitService();
@@ -164,7 +180,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return reply.code(500).send({ error: 'Внутренняя ошибка сервера' });
   });
 
-  app.get('/health', async (_request, reply) => {
+  app.get('/health', async () => ({ ok: true, service: 'assembly-orders-2026' }));
+
+  app.get('/health/ready', async (_request, reply) => {
     try {
       await db.$queryRaw`SELECT 1`;
       return { ok: true, service: 'assembly-orders-2026', database: 'connected' };
@@ -331,10 +349,25 @@ export async function buildApp(options: BuildAppOptions = {}) {
     async (request) => resolveProblem(request.params.id, resolveProblemSchema.parse(request.body)),
   );
 
+  const frontendRoot = options.frontendRoot === undefined ? DEFAULT_FRONTEND_ROOT : options.frontendRoot;
+  if (frontendRoot && existsSync(join(frontendRoot, 'index.html'))) {
+    await app.register(fastifyStatic, { root: frontendRoot, wildcard: false });
+    app.setNotFoundHandler((request, reply) => {
+      if (isBackendPath(request.url) || (request.method !== 'GET' && request.method !== 'HEAD')) {
+        return reply.code(404).send({ error: 'Маршрут не найден' });
+      }
+      return reply.type('text/html; charset=utf-8').sendFile('index.html');
+    });
+  }
+
   return app;
 }
 
 async function start() {
+  validateProductionEnvironment();
+  if (process.env.NODE_ENV === 'production' && !existsSync(join(DEFAULT_FRONTEND_ROOT, 'index.html'))) {
+    throw new Error(`Production frontend build is missing: ${DEFAULT_FRONTEND_ROOT}`);
+  }
   const app = await buildApp();
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ port, host: '0.0.0.0' });

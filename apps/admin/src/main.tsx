@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { API_BASE } from './apiBase';
 import { type SoundName, soundLabels } from './audio/soundPlayer';
 import { useVoicePickerController, type VoiceQueueSnapshot } from './picker/voicePickerController';
 import { SPEECH_RATES, type SpeechRate } from './voice/speechSynthesis';
@@ -184,7 +185,7 @@ type Section =
   | 'analytics'
   | 'settings';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
+const API = API_BASE;
 const soundNames = Object.keys(soundLabels) as SoundName[];
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
