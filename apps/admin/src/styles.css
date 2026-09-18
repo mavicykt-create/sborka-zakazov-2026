@@ -111,6 +111,26 @@ h2 {
   align-items: center;
   gap: 12px;
 }
+.adminSession {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #dce7e1;
+  font-size: 13px;
+  font-weight: 800;
+}
+.logoutButton {
+  padding: 10px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 10px;
+  color: var(--cream);
+  background: rgba(0, 0, 0, 0.13);
+  font-weight: 900;
+  cursor: pointer;
+}
+.logoutButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
 .tabs {
   display: flex;
   padding: 4px;
@@ -684,7 +704,8 @@ main {
 .completionBar .eyebrow {
   margin-bottom: 2px;
 }
-.completionBar a {
+.completionBar a,
+.completionBar .reportButton {
   padding: 10px 13px;
   border: 1px solid #9db3a5;
   border-radius: 9px;
@@ -693,6 +714,7 @@ main {
   font-size: 12px;
   font-weight: 900;
   text-decoration: none;
+  cursor: pointer;
 }
 .completionBar small {
   max-width: 190px;
@@ -1928,6 +1950,108 @@ main {
   }
 }
 
+.adminLoginShell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  align-items: stretch;
+  background:
+    radial-gradient(circle at 10% 15%, rgba(244, 196, 124, 0.22), transparent 24%),
+    linear-gradient(120deg, var(--forest) 0 55%, #edf0e9 55% 100%);
+}
+.adminLoginIntro {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  padding: clamp(42px, 8vw, 120px);
+  color: var(--cream);
+}
+.adminLoginIntro h1 {
+  max-width: 760px;
+  margin-bottom: 22px;
+  font-size: clamp(48px, 7vw, 96px);
+  line-height: 0.95;
+}
+.adminLoginIntro > p:not(.eyebrow) {
+  max-width: 620px;
+  color: #c7d5cf;
+  font-size: clamp(18px, 2vw, 24px);
+  line-height: 1.5;
+}
+.adminLoginMark {
+  position: absolute;
+  right: -30px;
+  bottom: -62px;
+  color: rgba(255, 255, 255, 0.045);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(150px, 24vw, 360px);
+  line-height: 1;
+}
+.adminLoginCard {
+  align-self: center;
+  width: min(460px, calc(100% - 48px));
+  margin: 24px auto;
+  padding: clamp(30px, 5vw, 52px);
+  border: 1px solid rgba(23, 63, 52, 0.1);
+  border-radius: 28px;
+  background: rgba(248, 244, 233, 0.92);
+  box-shadow: 0 30px 80px rgba(21, 40, 32, 0.18);
+  backdrop-filter: blur(12px);
+  animation: enter 420ms ease-out both;
+}
+.adminLoginCard.loading {
+  grid-column: 1 / -1;
+  text-align: center;
+}
+.adminLoginCard h1,
+.adminLoginCard h2 {
+  margin-bottom: 12px;
+}
+.adminLoginCard > div > p:not(.eyebrow),
+.adminLoginCard > p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.adminLoginNote {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.adminLoginCard form,
+.adminLoginCard label {
+  display: grid;
+}
+.adminLoginCard label {
+  gap: 8px;
+  margin-top: 20px;
+  color: var(--forest);
+  font-weight: 900;
+}
+.adminLoginCard input {
+  width: 100%;
+  padding: 14px 15px;
+  border: 1px solid #cbd5cd;
+  border-radius: 11px;
+  color: #152820;
+  background: #fff;
+}
+.adminLoginCard .primary {
+  width: 100%;
+  margin: 24px 0 14px;
+  border-color: transparent;
+}
+.adminLoginError {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-left: 4px solid #a8402d;
+  border-radius: 8px;
+  color: #7e2e21;
+  background: #f8e7df;
+  font-weight: 800;
+}
+
 @keyframes enter {
   from {
     transform: translateY(8px);
@@ -1958,6 +2082,17 @@ main {
   }
 }
 @media (max-width: 900px) {
+  .adminLoginShell {
+    grid-template-columns: 1fr;
+    background: linear-gradient(165deg, var(--forest) 0 42%, #edf0e9 42% 100%);
+  }
+  .adminLoginIntro {
+    min-height: auto;
+    padding: 54px 32px 70px;
+  }
+  .adminLoginIntro h1 {
+    font-size: clamp(42px, 10vw, 68px);
+  }
   .masthead,
   .headerActions,
   .analyticsHeading {
@@ -2014,6 +2149,14 @@ main {
   }
 }
 @media (max-width: 650px) {
+  .adminLoginCard {
+    width: calc(100% - 24px);
+    margin: 12px auto 28px;
+    border-radius: 20px;
+  }
+  .adminLoginIntro {
+    padding: 38px 22px 58px;
+  }
   .app {
     padding: 12px;
   }

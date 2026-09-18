@@ -52,6 +52,9 @@ npm run dev:api
 npm run dev:admin
 ```
 
+Перед запуском задайте в локальном `.env` собственные `ADMIN_PASSWORD` длиной не менее 12 символов
+и `ADMIN_SESSION_SECRET`. Эти значения являются секретами и не должны попадать в Git.
+
 API: `http://localhost:8080`  
 Admin: `http://localhost:5173`
 
@@ -79,6 +82,12 @@ curl -F "file=@test-data/sample-order-12293.xlsx" http://localhost:8080/api/orde
 - `GET /api/analytics?days=30` — динамика и показатели за 7, 30 или 90 дней;
 - `GET /api/imports?status=FAILED&limit=30` — журнал попыток импорта;
 - `GET /api/settings` — безопасная диагностика без секретов окружения.
+
+Все маршруты главного терминала под `/api/orders`, `/api/order-items`, `/api/workers`,
+`/api/dashboard`, `/api/analytics`, `/api/imports`, `/api/problems` и `/api/settings` требуют
+административную HttpOnly cookie. Вход выполняется через `POST /api/admin/login`, проверка сессии —
+через `GET /api/admin/me`, выход — через `POST /api/admin/logout`. Браузер не получает пароль,
+секрет сессии и не хранит административный токен в `localStorage`.
 
 ## Сборщики и распределение
 
@@ -135,11 +144,83 @@ YANDEX_SPEECHKIT_VOICE=alena
 
 Официальная документация: [метод API v1](https://yandex.cloud/ru/docs/speechkit/tts/request), [голоса SpeechKit](https://yandex.cloud/ru/docs/speechkit/tts/voices), [API-ключи](https://yandex.cloud/ru/docs/iam/concepts/authorization/api-key).
 
-Для production-окружения применяйте уже созданные миграции без интерактивного режима:
+## Локальный production-запуск
+
+Production-сборка объединяет Fastify API и React/Vite frontend на одном порту. Клиент без
+`VITE_API_URL` обращается к `/api/*` на текущем origin, поэтому production runtime не зависит от
+Vite-переменных сборки.
+
+```powershell
+npm run build:prod
+$env:NODE_ENV='production'
+$env:DATABASE_URL='postgresql://assembly:assembly@localhost:5432/assembly2026?schema=public'
+$env:JWT_SECRET='replace-with-a-long-random-secret'
+$env:ADMIN_USERNAME='admin'
+$env:ADMIN_PASSWORD='replace-with-a-strong-admin-password'
+$env:ADMIN_SESSION_SECRET='replace-with-a-long-random-session-secret'
+$env:PORT='8080'
+$env:ADMIN_ORIGIN='http://localhost:8080'
+$env:ADMIN_PUBLIC_URL='http://localhost:8080'
+npm run start:prod
+```
+
+`start:prod` сначала выполняет `prisma migrate deploy` и останавливается при ошибке миграции, затем
+запускает скомпилированный API. Production-старт также отклоняет пустые `DATABASE_URL`,
+`ADMIN_USERNAME`, `ADMIN_SESSION_SECRET`, пароль администратора короче 12 символов, а также пустой
+или небезопасный `JWT_SECRET=change-me`.
+
+Проверки после запуска:
 
 ```bash
-npm --workspace @assembly/api run prisma:deploy
+curl http://localhost:8080/health
+curl http://localhost:8080/health/ready
+curl -c admin-cookie.txt -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"replace-with-a-strong-admin-password"}' \
+  http://localhost:8080/api/admin/login
+curl -b admin-cookie.txt http://localhost:8080/api/settings
 ```
+
+Откройте `http://localhost:8080` и произвольный SPA-маршрут, например
+`http://localhost:8080/orders/current`. `/health` является liveness-проверкой без секретов, а
+`/health/ready` отдельно проверяет подключение к PostgreSQL.
+
+## Развёртывание на Amvera
+
+Проект использует один Amvera Node.js application и отдельный managed PostgreSQL. Backend раздаёт
+`apps/admin/dist`, поэтому терминал, сборщики и API работают с одного HTTPS-домена без production
+CORS и отдельного frontend-проекта.
+
+1. Создайте managed PostgreSQL в Amvera и дождитесь статуса «PostgreSQL запущен».
+2. На странице «Инфо» базы скопируйте внутренний hostname для чтения/записи вида
+   `amvera-<account>-cnpg-<db-project>-rw`.
+3. Создайте Node.js application, привяжите GitHub-репозиторий и ветку `main`. Корневой `amvera.yml`
+   использует Node.js 22, `npm run build:prod`, `npm run start:prod` и порт `8080`.
+4. Добавьте secrets `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`, `DATABASE_URL`, `JWT_SECRET` и,
+   при использовании Alena, `YANDEX_SPEECHKIT_API_KEY`. Пароль администратора должен содержать не
+   менее 12 символов, а пароль PostgreSQL в URL должен быть URL-encoded. Шаблон:
+
+   ```text
+   postgresql://<user>:<urlencoded-password>@amvera-<account>-cnpg-<db-project>-rw:5432/<db-name>?schema=public
+   ```
+
+5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`, `ADMIN_USERNAME=admin`,
+   `YANDEX_SPEECHKIT_VOICE=alena`, `ADMIN_PUBLIC_URL=https://<production-domain>` и
+   `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
+   дублируйте в обычных variables.
+6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и
+   дождитесь выпуска сертификата.
+7. Запустите сборку или перезапуск. На build phase секреты не требуются; миграции выполняются при
+   старте контейнера до API.
+8. Проверьте `https://<production-domain>/health` (HTTP 200), затем
+   `https://<production-domain>/health/ready` (PostgreSQL connected) и откройте сам терминал.
+9. Импортируйте тестовый XLSX и убедитесь, что заказ №12293 содержит 48 позиций и повторная загрузка
+   определяется как дубль.
+10. В режиме сборщика проверьте системный TTS. Если настроен secret SpeechKit, выберите Alena и
+    проверьте речь и fallback без раскрытия API-ключа в браузере.
+
+Актуальная справка: [Node.JS Server](https://docs.amvera.ru/applications/environments/nodejs-server.html),
+[managed PostgreSQL](https://docs.amvera.ru/databases/postgreSQL.html),
+[HTTPS и сеть](https://docs.amvera.ru/applications/configuration/network.html).
 
 Основные маршруты workflow:
 
@@ -169,7 +250,7 @@ PDF доступен после завершения сборки. QR-код и�
 ```bash
 npm test
 npm run lint
-npm run build
+npm run build:prod
 ```
 
 Тест парсера проверяет документ №12293 от 10.09.2026, склад «Основной склад», ровно 48 позиций, первую товарную строку, группировку и сортировку. Unit-тесты дополнительно проверяют распределение, переходы статусов и хэширование пароля.

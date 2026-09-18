@@ -1,10 +1,10 @@
 meta:
-  environment: static_web
+  environment: node
   toolchain:
     name: npm
-    version: "20"
+    version: "22"
 build:
-  additionalCommands: null
-  artifacts:
-    dist/*: /
-run: {}
+  additionalCommands: npm run build:prod
+run:
+  command: npm run start:prod
+  containerPort: 8080

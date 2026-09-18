@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { API_BASE } from './apiBase';
 import { type SoundName, soundLabels } from './audio/soundPlayer';
 import { useVoicePickerController, type VoiceQueueSnapshot } from './picker/voicePickerController';
 import { SPEECH_RATES, type SpeechRate } from './voice/speechSynthesis';
@@ -174,6 +175,7 @@ type PickerQueue = {
 };
 type PickerLogin = { token: string; expiresAt: string; worker: PickerWorker };
 type PickerSpeechSettings = { yandexEnabled: boolean; voice: string };
+type AdminSessionResponse = { admin: { username: string }; expiresAt: string };
 type Section =
   | 'dashboard'
   | 'orders'
@@ -184,13 +186,21 @@ type Section =
   | 'analytics'
   | 'settings';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
+const API = API_BASE;
 const soundNames = Object.keys(soundLabels) as SoundName[];
+const ADMIN_UNAUTHORIZED_EVENT = 'assembly-admin-unauthorized';
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, credentials: 'include' });
   const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(data.error ?? `Ошибка HTTP ${response.status}`);
+  if (!response.ok) {
+    const pathname = new URL(url, window.location.origin).pathname;
+    const isExpectedLoginCheck = pathname === '/api/admin/login' || pathname === '/api/admin/me';
+    if (response.status === 401 && !pathname.startsWith('/api/picker/') && !isExpectedLoginCheck) {
+      window.dispatchEvent(new Event(ADMIN_UNAUTHORIZED_EVENT));
+    }
+    throw new Error(data.error ?? `Ошибка HTTP ${response.status}`);
+  }
   return data;
 }
 
@@ -199,6 +209,11 @@ function quantity(value: string | number | null): string {
 }
 
 function App() {
+  const [admin, setAdmin] = useState<{ username: string } | null>(null);
+  const [adminChecked, setAdminChecked] = useState(false);
+  const [adminCredentials, setAdminCredentials] = useState({ username: 'admin', password: '' });
+  const [adminLoginError, setAdminLoginError] = useState('');
+  const [adminLoginBusy, setAdminLoginBusy] = useState(false);
   const [section, setSection] = useState<Section>('dashboard');
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -215,6 +230,23 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [workerForm, setWorkerForm] = useState({ name: '', login: '', password: '' });
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setAdmin(null);
+      setNotice('');
+      setAdminLoginError('Сессия завершена. Войдите снова.');
+    };
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    void requestJson<AdminSessionResponse>(`${API}/api/admin/me`)
+      .then((session) => setAdmin(session.admin))
+      .catch(() => setAdmin(null))
+      .finally(() => setAdminChecked(true));
+  }, []);
 
   async function refreshLists() {
     const [
@@ -248,6 +280,7 @@ function App() {
   }
 
   useEffect(() => {
+    if (!admin) return;
     Promise.all([
       requestJson<OrderListItem[]>(`${API}/api/orders`),
       requestJson<Worker[]>(`${API}/api/workers`),
@@ -293,7 +326,7 @@ function App() {
         },
       )
       .catch((error) => setNotice(error instanceof Error ? error.message : 'API недоступен'));
-  }, []);
+  }, [admin]);
 
   const stats = useMemo(
     () => ({
@@ -458,6 +491,26 @@ function App() {
     });
   }
 
+  async function downloadReport(kind: 'short' | 'full') {
+    if (!selected) return;
+    await perform(async () => {
+      const response = await fetch(`${API}/api/orders/${selected.id}/reports/${kind}.pdf`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        if (response.status === 401) window.dispatchEvent(new Event(ADMIN_UNAUTHORIZED_EVENT));
+        throw new Error(data?.error ?? `Ошибка HTTP ${response.status}`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `assembly-${selected.documentNumber}-${kind}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
   async function assign() {
     if (!selected || selectedWorkers.length === 0) {
       setNotice('Выберите хотя бы одного доступного сборщика.');
@@ -526,6 +579,55 @@ function App() {
       });
       await refreshLists();
     });
+  }
+
+  async function loginAdmin(event: React.FormEvent) {
+    event.preventDefault();
+    setAdminLoginBusy(true);
+    setAdminLoginError('');
+    try {
+      const session = await requestJson<AdminSessionResponse>(`${API}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(adminCredentials),
+      });
+      setAdmin(session.admin);
+      setAdminCredentials((current) => ({ ...current, password: '' }));
+    } catch (error) {
+      setAdminLoginError(error instanceof Error ? error.message : 'Не удалось войти');
+    } finally {
+      setAdminChecked(true);
+      setAdminLoginBusy(false);
+    }
+  }
+
+  async function logoutAdmin() {
+    setBusy(true);
+    try {
+      await requestJson<{ ok: true }>(`${API}/api/admin/logout`, { method: 'POST' });
+    } catch {
+      // Локально закрываем терминал даже при недоступном сервере.
+    } finally {
+      setAdmin(null);
+      setSelected(null);
+      setOrders([]);
+      setNotice('');
+      setBusy(false);
+    }
+  }
+
+  if (!adminChecked) return <AdminSessionLoading />;
+
+  if (!admin) {
+    return (
+      <AdminLoginScreen
+        credentials={adminCredentials}
+        setCredentials={setAdminCredentials}
+        busy={adminLoginBusy}
+        error={adminLoginError}
+        onSubmit={loginAdmin}
+      />
+    );
   }
 
   return (
@@ -608,6 +710,12 @@ function App() {
               }}
             />
           </label>
+          <div className="adminSession">
+            <span>{admin.username}</span>
+            <button className="logoutButton" type="button" disabled={busy} onClick={() => void logoutAdmin()}>
+              Выйти
+            </button>
+          </div>
         </div>
       </header>
 
@@ -716,8 +824,20 @@ function App() {
                       <p className="eyebrow">Итоговые документы</p>
                       <strong>{selected.status === 'CLOSED' ? 'Заказ закрыт' : 'Сборка завершена'}</strong>
                     </div>
-                    <a href={`${API}/api/orders/${selected.id}/reports/short.pdf`}>Короткий PDF</a>
-                    <a href={`${API}/api/orders/${selected.id}/reports/full.pdf`}>Полный PDF</a>
+                    <button
+                      className="reportButton"
+                      type="button"
+                      onClick={() => void downloadReport('short')}
+                    >
+                      Короткий PDF
+                    </button>
+                    <button
+                      className="reportButton"
+                      type="button"
+                      onClick={() => void downloadReport('full')}
+                    >
+                      Полный PDF
+                    </button>
                     {selected.status !== 'CLOSED' && (
                       <button
                         className="primary"
@@ -820,6 +940,76 @@ function App() {
         </main>
       )}
     </div>
+  );
+}
+
+function AdminSessionLoading() {
+  return (
+    <main className="adminLoginShell" aria-live="polite">
+      <div className="adminLoginCard loading">
+        <p className="eyebrow">Защищённый терминал</p>
+        <h1>Проверяем сессию</h1>
+        <p>Подключаем главный терминал к серверу…</p>
+      </div>
+    </main>
+  );
+}
+
+function AdminLoginScreen({
+  credentials,
+  setCredentials,
+  busy,
+  error,
+  onSubmit,
+}: {
+  credentials: { username: string; password: string };
+  setCredentials: React.Dispatch<React.SetStateAction<{ username: string; password: string }>>;
+  busy: boolean;
+  error: string;
+  onSubmit: (event: React.FormEvent) => Promise<void>;
+}) {
+  return (
+    <main className="adminLoginShell">
+      <section className="adminLoginIntro">
+        <p className="eyebrow">Сборка заказов 2026</p>
+        <h1>Главный терминал под защитой</h1>
+        <p>Заказы, отчёты и управление сменой доступны только администратору.</p>
+        <div className="adminLoginMark" aria-hidden="true">
+          2026
+        </div>
+      </section>
+      <form className="adminLoginCard" onSubmit={(event) => void onSubmit(event)}>
+        <div>
+          <p className="eyebrow">Авторизация</p>
+          <h2>Вход администратора</h2>
+          <p>Используйте учётные данные из защищённых переменных сервера.</p>
+        </div>
+        <label>
+          Логин
+          <input
+            autoComplete="username"
+            value={credentials.username}
+            onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))}
+            required
+          />
+        </label>
+        <label>
+          Пароль
+          <input
+            autoComplete="current-password"
+            type="password"
+            value={credentials.password}
+            onChange={(event) => setCredentials((current) => ({ ...current, password: event.target.value }))}
+            required
+          />
+        </label>
+        {error && <div className="adminLoginError">{error}</div>}
+        <button className="primary" disabled={busy} type="submit">
+          {busy ? 'Проверяем…' : 'Открыть терминал'}
+        </button>
+        <small className="adminLoginNote">Сессия хранится только в защищённой HttpOnly cookie.</small>
+      </form>
+    </main>
   );
 }
 
