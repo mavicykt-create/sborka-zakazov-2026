@@ -10,8 +10,11 @@ import {
   buildItemSpeech,
   buildQuantitySpeech,
   buildRemainingSpeech,
+  DEFAULT_SPEECH_RATE,
   type SpeechItem,
+  type SpeechRate,
   SpeechSynthesizer,
+  type SpeechVoiceOption,
 } from '../voice/speechSynthesis';
 
 export type VoicePickerItem = SpeechItem & { id: string };
@@ -38,6 +41,39 @@ const micLabels: Record<VoiceMicState, string> = {
 
 const delay = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
+const speechRateStorageKey = 'pickerSpeechRate';
+const speechVoiceStorageKey = 'pickerSpeechVoice';
+const shortNamesStorageKey = 'pickerShortNames';
+
+function readStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Voice settings remain available for the current tab when storage is blocked.
+  }
+}
+
+function readSpeechRate(): SpeechRate {
+  const value = Number(readStorage(speechRateStorageKey));
+  return value === 1 || value === 1.12 || value === 1.22 || value === 1.35 ? value : DEFAULT_SPEECH_RATE;
+}
+
+export function confirmedStatusSounds(status: 'PICKED' | 'NOT_FOUND' | 'SKIPPED'): SoundName[] {
+  return [status === 'PICKED' ? 'accepted' : 'problem'];
+}
+
+export function itemAnnouncementSounds(item: Pick<VoicePickerItem, 'pickType'>): SoundName[] {
+  return item.pickType === 'PIECE' ? ['piece'] : [];
+}
+
 export function useVoicePickerController(options: VoicePickerOptions) {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [soundsEnabled, setSoundsEnabled] = useState(true);
@@ -45,6 +81,10 @@ export function useVoicePickerController(options: VoicePickerOptions) {
   const [lastTranscript, setLastTranscript] = useState('');
   const [voiceError, setVoiceError] = useState('');
   const [recognitionSupported, setRecognitionSupported] = useState(true);
+  const [speechRate, setSpeechRateState] = useState<SpeechRate>(readSpeechRate);
+  const [speechVoice, setSpeechVoiceState] = useState(() => readStorage(speechVoiceStorageKey) ?? '');
+  const [shortNames, setShortNamesState] = useState(() => readStorage(shortNamesStorageKey) !== 'false');
+  const [speechVoices, setSpeechVoices] = useState<SpeechVoiceOption[]>([]);
   const recognitionRef = useRef<SpeechRecognitionAdapter | null>(null);
   const synthesizerRef = useRef(new SpeechSynthesizer());
   const soundRef = useRef(new SoundPlayer());
@@ -54,8 +94,12 @@ export function useVoicePickerController(options: VoicePickerOptions) {
   const soundsEnabledRef = useRef(true);
   const inFlightRef = useRef(false);
   const optionsRef = useRef(options);
+  const speechSettingsRef = useRef({ rate: speechRate, voiceURI: speechVoice });
+  const shortNamesRef = useRef(shortNames);
   const commandHandlerRef = useRef<(command: VoiceCommand, transcript: string) => void>(() => undefined);
   optionsRef.current = options;
+  speechSettingsRef.current = { rate: speechRate, voiceURI: speechVoice };
+  shortNamesRef.current = shortNames;
 
   const startListening = useCallback(() => {
     if (!enabledRef.current || pausedRef.current || speakingRef.current) return;
@@ -82,13 +126,13 @@ export function useVoicePickerController(options: VoicePickerOptions) {
       recognitionRef.current?.stop();
       speakingRef.current = true;
       setMicState('speaking');
-      const spoken = await synthesizerRef.current.speak(text);
+      const spoken = await synthesizerRef.current.speak(text, speechSettingsRef.current);
       speakingRef.current = false;
       if (!spoken && enabledRef.current) {
         setVoiceError('Озвучивание недоступно в этом браузере. Используйте экранные кнопки.');
       }
       if (resume && enabledRef.current && !pausedRef.current) {
-        await delay(350);
+        await delay(200);
         startListening();
       } else if (pausedRef.current || !enabledRef.current) {
         setMicState('paused');
@@ -98,7 +142,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
   );
 
   const announce = useCallback(
-    async (item: VoicePickerItem, withNextSignal = false, forceSpeech = false) => {
+    async (item: VoicePickerItem, withPieceSignal = true, forceSpeech = false) => {
       if (item.pickType === 'REVIEW') {
         recognitionRef.current?.stop();
         setMicState('paused');
@@ -109,9 +153,10 @@ export function useVoicePickerController(options: VoicePickerOptions) {
         return;
       }
       setVoiceError('');
-      if (withNextSignal) await play('next');
-      if (item.pickType === 'PIECE') await play('piece');
-      const phrase = buildItemSpeech(item);
+      if (withPieceSignal) {
+        for (const sound of itemAnnouncementSounds(item)) await play(sound);
+      }
+      const phrase = buildItemSpeech(item, shortNamesRef.current);
       if (phrase && (enabledRef.current || forceSpeech)) await speak(phrase);
     },
     [play, speak],
@@ -126,7 +171,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
         setMicState('paused');
         return;
       }
-      if (enabledRef.current) await announce(snapshot.current, true);
+      if (enabledRef.current) await announce(snapshot.current);
     },
     [announce, play, speak],
   );
@@ -150,7 +195,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
           if (enabledRef.current && !pausedRef.current) startListening();
           return;
         }
-        await play(status === 'PICKED' ? 'accepted' : 'problem');
+        for (const sound of confirmedStatusSounds(status)) await play(sound);
         await finishOrAdvance(snapshot);
       } finally {
         inFlightRef.current = false;
@@ -162,9 +207,8 @@ export function useVoicePickerController(options: VoicePickerOptions) {
   const repeat = useCallback(async () => {
     const current = optionsRef.current.current;
     if (!current) return;
-    await play('repeat');
     await announce(current, false, true);
-  }, [announce, play]);
+  }, [announce]);
 
   const sayQuantity = useCallback(async () => {
     const current = optionsRef.current.current;
@@ -208,7 +252,6 @@ export function useVoicePickerController(options: VoicePickerOptions) {
         if (enabledRef.current && !pausedRef.current) startListening();
         return;
       }
-      await play('repeat');
       if (snapshot.current && enabledRef.current) await announce(snapshot.current);
     } finally {
       inFlightRef.current = false;
@@ -278,6 +321,28 @@ export function useVoicePickerController(options: VoicePickerOptions) {
     };
   }, []);
 
+  useEffect(() => {
+    const synthesizer = synthesizerRef.current;
+    const refreshVoices = () => setSpeechVoices(synthesizer.getRussianVoices());
+    refreshVoices();
+    return synthesizer.onVoicesChanged(refreshVoices);
+  }, []);
+
+  const setSpeechRate = useCallback((rate: SpeechRate) => {
+    setSpeechRateState(rate);
+    writeStorage(speechRateStorageKey, String(rate));
+  }, []);
+
+  const setSpeechVoice = useCallback((voiceURI: string) => {
+    setSpeechVoiceState(voiceURI);
+    writeStorage(speechVoiceStorageKey, voiceURI);
+  }, []);
+
+  const setShortNames = useCallback((enabled: boolean) => {
+    setShortNamesState(enabled);
+    writeStorage(shortNamesStorageKey, String(enabled));
+  }, []);
+
   const toggleVoice = useCallback(
     async (enabled: boolean) => {
       enabledRef.current = enabled;
@@ -308,6 +373,10 @@ export function useVoicePickerController(options: VoicePickerOptions) {
   return {
     voiceEnabled,
     soundsEnabled,
+    speechRate,
+    speechVoice,
+    speechVoices,
+    shortNames,
     recognitionSupported,
     micState,
     micLabel: micState === 'paused' && voiceEnabled ? 'Пауза · жду «Продолжить»' : micLabels[micState],
@@ -315,6 +384,9 @@ export function useVoicePickerController(options: VoicePickerOptions) {
     voiceError,
     toggleVoice,
     toggleSounds,
+    setSpeechRate,
+    setSpeechVoice,
+    setShortNames,
     testSound,
     performStatus,
     repeat,
