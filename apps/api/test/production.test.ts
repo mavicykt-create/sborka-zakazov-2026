@@ -21,7 +21,7 @@ describe('production configuration', () => {
     expect(resolveApiBase('https://api.example.test/', true)).toBe('https://api.example.test');
   });
 
-  it('requires DATABASE_URL and a secure JWT_SECRET in production', () => {
+  it('requires database, JWT and administrator secrets in production', () => {
     expect(() => validateProductionEnvironment({ NODE_ENV: 'production' })).toThrow(
       'DATABASE_URL is required',
     );
@@ -37,6 +37,28 @@ describe('production configuration', () => {
         NODE_ENV: 'production',
         DATABASE_URL: 'postgresql://example',
         JWT_SECRET: 'production-secret',
+        ADMIN_USERNAME: 'admin',
+        ADMIN_PASSWORD: 'short',
+        ADMIN_SESSION_SECRET: 'admin-session-secret',
+      }),
+    ).toThrow('ADMIN_PASSWORD must be at least 12 characters');
+    expect(() =>
+      validateProductionEnvironment({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://example',
+        JWT_SECRET: 'production-secret',
+        ADMIN_USERNAME: 'admin',
+        ADMIN_PASSWORD: 'production-admin-password',
+      }),
+    ).toThrow('ADMIN_SESSION_SECRET is required');
+    expect(() =>
+      validateProductionEnvironment({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://example',
+        JWT_SECRET: 'production-secret',
+        ADMIN_USERNAME: 'admin',
+        ADMIN_PASSWORD: 'production-admin-password',
+        ADMIN_SESSION_SECRET: 'production-admin-session-secret',
       }),
     ).not.toThrow();
   });

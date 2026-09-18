@@ -52,6 +52,9 @@ npm run dev:api
 npm run dev:admin
 ```
 
+Перед запуском задайте в локальном `.env` собственные `ADMIN_PASSWORD` длиной не менее 12 символов
+и `ADMIN_SESSION_SECRET`. Эти значения являются секретами и не должны попадать в Git.
+
 API: `http://localhost:8080`  
 Admin: `http://localhost:5173`
 
@@ -79,6 +82,12 @@ curl -F "file=@test-data/sample-order-12293.xlsx" http://localhost:8080/api/orde
 - `GET /api/analytics?days=30` — динамика и показатели за 7, 30 или 90 дней;
 - `GET /api/imports?status=FAILED&limit=30` — журнал попыток импорта;
 - `GET /api/settings` — безопасная диагностика без секретов окружения.
+
+Все маршруты главного терминала под `/api/orders`, `/api/order-items`, `/api/workers`,
+`/api/dashboard`, `/api/analytics`, `/api/imports`, `/api/problems` и `/api/settings` требуют
+административную HttpOnly cookie. Вход выполняется через `POST /api/admin/login`, проверка сессии —
+через `GET /api/admin/me`, выход — через `POST /api/admin/logout`. Браузер не получает пароль,
+секрет сессии и не хранит административный токен в `localStorage`.
 
 ## Сборщики и распределение
 
@@ -146,6 +155,9 @@ npm run build:prod
 $env:NODE_ENV='production'
 $env:DATABASE_URL='postgresql://assembly:assembly@localhost:5432/assembly2026?schema=public'
 $env:JWT_SECRET='replace-with-a-long-random-secret'
+$env:ADMIN_USERNAME='admin'
+$env:ADMIN_PASSWORD='replace-with-a-strong-admin-password'
+$env:ADMIN_SESSION_SECRET='replace-with-a-long-random-session-secret'
 $env:PORT='8080'
 $env:ADMIN_ORIGIN='http://localhost:8080'
 $env:ADMIN_PUBLIC_URL='http://localhost:8080'
@@ -153,15 +165,19 @@ npm run start:prod
 ```
 
 `start:prod` сначала выполняет `prisma migrate deploy` и останавливается при ошибке миграции, затем
-запускает скомпилированный API. Production-старт также отклоняет пустые `DATABASE_URL`, `JWT_SECRET`
-и небезопасный `JWT_SECRET=change-me`.
+запускает скомпилированный API. Production-старт также отклоняет пустые `DATABASE_URL`,
+`ADMIN_USERNAME`, `ADMIN_SESSION_SECRET`, пароль администратора короче 12 символов, а также пустой
+или небезопасный `JWT_SECRET=change-me`.
 
 Проверки после запуска:
 
 ```bash
 curl http://localhost:8080/health
 curl http://localhost:8080/health/ready
-curl http://localhost:8080/api/settings
+curl -c admin-cookie.txt -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"replace-with-a-strong-admin-password"}' \
+  http://localhost:8080/api/admin/login
+curl -b admin-cookie.txt http://localhost:8080/api/settings
 ```
 
 Откройте `http://localhost:8080` и произвольный SPA-маршрут, например
@@ -179,16 +195,18 @@ CORS и отдельного frontend-проекта.
    `amvera-<account>-cnpg-<db-project>-rw`.
 3. Создайте Node.js application, привяжите GitHub-репозиторий и ветку `main`. Корневой `amvera.yml`
    использует Node.js 22, `npm run build:prod`, `npm run start:prod` и порт `8080`.
-4. Добавьте secrets `DATABASE_URL`, `JWT_SECRET` и, при использовании Alena,
-   `YANDEX_SPEECHKIT_API_KEY`. Пароль PostgreSQL в URL должен быть URL-encoded. Шаблон:
+4. Добавьте secrets `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`, `DATABASE_URL`, `JWT_SECRET` и,
+   при использовании Alena, `YANDEX_SPEECHKIT_API_KEY`. Пароль администратора должен содержать не
+   менее 12 символов, а пароль PostgreSQL в URL должен быть URL-encoded. Шаблон:
 
    ```text
    postgresql://<user>:<urlencoded-password>@amvera-<account>-cnpg-<db-project>-rw:5432/<db-name>?schema=public
    ```
 
-5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`,
+5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`, `ADMIN_USERNAME=admin`,
    `YANDEX_SPEECHKIT_VOICE=alena`, `ADMIN_PUBLIC_URL=https://<production-domain>` и
-   `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте.
+   `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
+   дублируйте в обычных variables.
 6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и
    дождитесь выпуска сертификата.
 7. Запустите сборку или перезапуск. На build phase секреты не требуются; миграции выполняются при

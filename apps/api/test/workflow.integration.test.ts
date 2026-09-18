@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../src/db.js';
+import { AdminAuthService } from '../src/modules/auth/adminAuth.js';
 import { buildApp } from '../src/server.js';
 
 const runDatabaseTests = process.env.RUN_DB_TESTS === '1';
@@ -13,7 +14,27 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
   const importFilenames = ['sample-order-12293.xlsx', 'broken-order.xlsx'];
 
   beforeAll(async () => {
-    app = await buildApp();
+    app = await buildApp({
+      adminAuthService: new AdminAuthService({
+        username: 'integration-admin',
+        password: 'integration-admin-password',
+        sessionSecret: 'integration-admin-session-secret',
+      }),
+    });
+    const injectWithoutAdmin = app.inject.bind(app);
+    const login = await injectWithoutAdmin({
+      method: 'POST',
+      url: '/api/admin/login',
+      payload: { username: 'integration-admin', password: 'integration-admin-password' },
+    });
+    const adminCookie = String(login.headers['set-cookie']).split(';')[0];
+    app.inject = ((options: InjectOptions | string) => {
+      if (typeof options === 'string') return injectWithoutAdmin(options);
+      return injectWithoutAdmin({
+        ...options,
+        headers: { cookie: adminCookie, ...options.headers },
+      });
+    }) as FastifyInstance['inject'];
     await db.order.deleteMany({ where: { documentNumber: '12293', warehouse: 'Основной склад' } });
     await db.importAttempt.deleteMany({ where: { filename: { in: importFilenames } } });
     await db.worker.deleteMany({ where: { login: { in: [...logins, 'it-off-shift'] } } });
