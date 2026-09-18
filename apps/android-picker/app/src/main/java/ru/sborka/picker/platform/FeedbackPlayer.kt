@@ -15,7 +15,14 @@ class FeedbackPlayer(private val context: Context) {
     private val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 60)
 
     suspend fun play(kind: FeedbackKind, settings: PickerSettings) {
-        if (settings.soundEnabled) {
+        val soundAllowed = settings.soundEnabled && when (kind) {
+            FeedbackKind.ACCEPTED -> settings.acceptedSoundEnabled
+            FeedbackKind.PIECE -> settings.pieceSoundEnabled
+            FeedbackKind.PROBLEM -> settings.problemSoundEnabled
+            FeedbackKind.ERROR -> settings.errorSoundEnabled
+            FeedbackKind.COMPLETED -> settings.completedSoundEnabled
+        }
+        if (soundAllowed) {
             when (kind) {
                 FeedbackKind.ACCEPTED -> tone.startTone(ToneGenerator.TONE_DTMF_5, 100)
                 FeedbackKind.PIECE -> tone.startTone(ToneGenerator.TONE_DTMF_9, 90)
@@ -29,7 +36,7 @@ class FeedbackPlayer(private val context: Context) {
             }
         }
         if (settings.vibrationEnabled && kind != FeedbackKind.PIECE) vibrate(kind)
-        if (settings.soundEnabled && kind != FeedbackKind.ERROR) delay(120)
+        if (soundAllowed && kind != FeedbackKind.ERROR) delay(120)
     }
 
     fun release() = tone.release()

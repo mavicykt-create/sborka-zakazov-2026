@@ -21,6 +21,7 @@ import ru.sborka.picker.data.toPickerMessage
 import ru.sborka.picker.domain.PauseCommandGate
 import ru.sborka.picker.domain.VoiceCommand
 import ru.sborka.picker.domain.VoiceCommandParser
+import ru.sborka.picker.domain.categorySpeech
 import ru.sborka.picker.domain.itemSpeech
 import ru.sborka.picker.domain.quantitySpeech
 import ru.sborka.picker.domain.remainingSpeech
@@ -225,6 +226,11 @@ class PickerViewModel(
 
     private suspend fun applyQueue(queue: PickerQueue, announce: Boolean) {
         val previousState = _state.value
+        val previousCategory = previousState.current?.let(::categorySpeech)
+        val nextCurrent = queue.items.firstOrNull { it.status == "ACTIVE" } ?: queue.items.firstOrNull()
+        val nextCategory = nextCurrent?.let(::categorySpeech)
+        val shouldAnnounceCategory =
+            previousState.settings.announceCategories && nextCategory != null && nextCategory != previousCategory
         val startsNewAssignment = previousState.completed && queue.items.isNotEmpty()
         val total = if (startsNewAssignment) {
             maxOf(queue.summary.total, queue.items.size)
@@ -245,14 +251,18 @@ class PickerViewModel(
         if (completed) {
             _effects.send(PickerEffect.Feedback(FeedbackKind.COMPLETED))
         } else if (announce) {
-            announceCurrent(pieceAlert = _state.value.current?.pickType == PickType.PIECE)
+            announceCurrent(
+                pieceAlert = _state.value.current?.pickType == PickType.PIECE,
+                category = if (shouldAnnounceCategory) nextCategory else null,
+            )
         }
     }
 
-    private fun announceCurrent(pieceAlert: Boolean) {
+    private fun announceCurrent(pieceAlert: Boolean, category: String? = null) {
         val value = _state.value
         val current = value.current ?: return
-        val text = itemSpeech(current, value.settings.shortNames) ?: return
+        val itemText = itemSpeech(current, value.settings.shortNames) ?: return
+        val text = if (category.isNullOrBlank()) itemText else "$category. $itemText"
         _effects.trySend(PickerEffect.Speak(text, pieceAlert))
     }
 
