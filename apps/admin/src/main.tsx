@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { type SoundName, soundLabels } from './audio/soundPlayer';
+import { useVoicePickerController, type VoiceQueueSnapshot } from './picker/voicePickerController';
 import './styles.css';
 
 type ShiftStatus = 'OFF_SHIFT' | 'AVAILABLE' | 'BUSY';
@@ -181,6 +183,7 @@ type Section =
   | 'settings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
+const soundNames = Object.keys(soundLabels) as SoundName[];
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -824,6 +827,7 @@ function PickerView() {
   const [credentials, setCredentials] = useState({ login: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [sessionTotal, setSessionTotal] = useState(0);
 
   async function pickerRequest<T>(path: string, init?: RequestInit) {
     return requestJson<T>(`${API}${path}`, {
@@ -837,9 +841,53 @@ function PickerView() {
   }
 
   async function refreshQueue() {
-    if (!token) return;
+    if (!token) return null;
     const nextQueue = await pickerRequest<PickerQueue>('/api/picker/queue');
     setQueue(nextQueue);
+    setSessionTotal((currentTotal) => Math.max(currentTotal, nextQueue.summary.total));
+    return nextQueue;
+  }
+
+  function queueAfterConfirmedStatus(
+    item: PickerItem,
+    status: 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED',
+  ): PickerQueue | null {
+    if (!queue) return null;
+    const completed = status === 'PICKED' || status === 'NOT_FOUND' || status === 'SKIPPED';
+    const items = completed
+      ? queue.items.filter((entry) => entry.id !== item.id)
+      : queue.items.map((entry) => (entry.id === item.id ? { ...entry, status } : entry));
+    const active = items.filter((entry) => entry.status === 'ACTIVE').length;
+    return {
+      ...queue,
+      items,
+      summary: { total: items.length, active, waiting: items.length - active },
+      lastCompleted: completed
+        ? {
+            ...item,
+            status,
+            eventType: {
+              PICKED: 'ITEM_PICKED',
+              NOT_FOUND: 'ITEM_NOT_FOUND',
+              SKIPPED: 'ITEM_SKIPPED',
+            }[status],
+            completedAt: new Date().toISOString(),
+          }
+        : queue.lastCompleted,
+    };
+  }
+
+  function queueAfterConfirmedUndo(): PickerQueue | null {
+    if (!queue?.lastCompleted) return null;
+    const restored: PickerItem = { ...queue.lastCompleted, status: 'ACTIVE', pickedAt: null };
+    const items = [...queue.items, restored].sort((left, right) => left.sortIndex - right.sortIndex);
+    const active = items.filter((entry) => entry.status === 'ACTIVE').length;
+    return {
+      ...queue,
+      items,
+      summary: { total: items.length, active, waiting: items.length - active },
+      lastCompleted: null,
+    };
   }
 
   useEffect(() => {
@@ -850,7 +898,10 @@ function PickerView() {
     void requestJson<PickerQueue>(`${API}/api/picker/queue`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(setQueue)
+      .then((nextQueue) => {
+        setQueue(nextQueue);
+        setSessionTotal(nextQueue.summary.total);
+      })
       .catch((error) => {
         setMessage(error instanceof Error ? error.message : 'Не удалось открыть очередь');
         if (error instanceof Error && error.message.toLowerCase().includes('сесси')) {
@@ -891,12 +942,16 @@ function PickerView() {
       sessionStorage.removeItem('pickerToken');
       setToken('');
       setQueue(null);
+      setSessionTotal(0);
       setMessage('');
       setBusy(false);
     }
   }
 
-  async function setItemStatus(item: PickerItem, status: 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED') {
+  async function setItemStatus(
+    item: PickerItem,
+    status: 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED',
+  ): Promise<PickerQueue | null> {
     setBusy(true);
     setMessage('');
     try {
@@ -910,18 +965,24 @@ function PickerView() {
         method: 'PATCH',
         body: JSON.stringify({ status, deviceAt: new Date().toISOString() }),
       });
-      await refreshQueue();
+      const nextQueue = await refreshQueue().catch(() => {
+        const confirmedQueue = queueAfterConfirmedStatus(item, status);
+        if (confirmedQueue) setQueue(confirmedQueue);
+        return confirmedQueue;
+      });
       setMessage(status === 'ACTIVE' ? 'Позиция взята в работу' : 'Результат сохранён');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Действие не выполнено');
+      return nextQueue;
+    } catch {
+      setMessage('Не удалось сохранить. Повторите команду.');
       await refreshQueue().catch(() => undefined);
+      return null;
     } finally {
       setBusy(false);
     }
   }
 
-  async function undoLast() {
-    if (!queue?.lastCompleted) return;
+  async function undoLast(): Promise<PickerQueue | null> {
+    if (!queue?.lastCompleted) return null;
     setBusy(true);
     setMessage('');
     try {
@@ -929,14 +990,45 @@ function PickerView() {
         method: 'POST',
         body: JSON.stringify({ deviceAt: new Date().toISOString() }),
       });
-      await refreshQueue();
+      const nextQueue = await refreshQueue().catch(() => {
+        const confirmedQueue = queueAfterConfirmedUndo();
+        if (confirmedQueue) setQueue(confirmedQueue);
+        return confirmedQueue;
+      });
       setMessage('Последнее действие отменено');
+      return nextQueue;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось отменить действие');
+      return null;
     } finally {
       setBusy(false);
     }
   }
+
+  const current = queue?.items.find((item) => item.status === 'ACTIVE') ?? queue?.items[0] ?? null;
+  const toVoiceSnapshot = (nextQueue: PickerQueue): VoiceQueueSnapshot => ({
+    current: nextQueue.items.find((item) => item.status === 'ACTIVE') ?? nextQueue.items[0] ?? null,
+    remaining: nextQueue.summary.total,
+  });
+  const voice = useVoicePickerController({
+    current,
+    remaining: queue?.summary.total ?? 0,
+    canUndo: Boolean(queue?.lastCompleted),
+    onStatus: async (voiceItem, status) => {
+      const item = queue?.items.find((entry) => entry.id === voiceItem.id);
+      if (!item) return null;
+      const nextQueue = await setItemStatus(item, status);
+      return nextQueue ? toVoiceSnapshot(nextQueue) : null;
+    },
+    onUndo: async () => {
+      const nextQueue = await undoLast();
+      return nextQueue ? toVoiceSnapshot(nextQueue) : null;
+    },
+  });
+
+  useEffect(() => {
+    if (!token && voice.voiceEnabled) void voice.toggleVoice(false);
+  }, [token, voice.toggleVoice, voice.voiceEnabled]);
 
   if (!token) {
     return (
@@ -985,8 +1077,9 @@ function PickerView() {
   }
 
   if (!queue) return <div className="empty">Загрузка личной очереди…</div>;
-  const current = queue.items.find((item) => item.status === 'ACTIVE') ?? queue.items[0];
   const upcoming = queue.items.filter((item) => item.id !== current?.id).slice(0, 6);
+  const currentPosition = current ? Math.max(1, sessionTotal - queue.summary.total + 1) : sessionTotal;
+  const reviewBlocked = current?.pickType === 'REVIEW';
 
   return (
     <section className="pickerShell">
@@ -1013,6 +1106,78 @@ function PickerView() {
         </div>
       )}
 
+      <div className="voiceConsole">
+        <div className="voiceSwitches">
+          <button
+            type="button"
+            className={`voiceStart ${voice.voiceEnabled ? 'isOn' : ''}`}
+            role="switch"
+            aria-checked={voice.voiceEnabled}
+            onClick={() => void voice.toggleVoice(!voice.voiceEnabled)}
+          >
+            <span className="switchTrack" aria-hidden="true">
+              <i />
+            </span>
+            {voice.voiceEnabled ? 'Голос включён' : 'Начать голосовую сборку'}
+          </button>
+          <button
+            type="button"
+            className={`soundSwitch ${voice.soundsEnabled ? 'isOn' : ''}`}
+            role="switch"
+            aria-checked={voice.soundsEnabled}
+            onClick={() => void voice.toggleSounds(!voice.soundsEnabled)}
+          >
+            <span className="switchTrack" aria-hidden="true">
+              <i />
+            </span>
+            Звуки
+          </button>
+        </div>
+
+        <div className={`micStatus is-${voice.micState}`} aria-live="polite">
+          <span className="micPulse" aria-hidden="true" />
+          <div>
+            <small className="voiceMetaLabel">Микрофон</small>
+            <strong className="voiceMetaValue">{voice.micLabel}</strong>
+          </div>
+          {voice.voiceEnabled && (
+            <button
+              type="button"
+              onClick={() => void (voice.micState === 'paused' ? voice.resume() : voice.pause())}
+            >
+              {voice.micState === 'paused' ? 'Продолжить' : 'Пауза'}
+            </button>
+          )}
+        </div>
+
+        <div className="voiceFeedback">
+          <span className="voiceMetaLabel">Последняя команда</span>
+          <strong className="voiceMetaValue">{voice.lastTranscript || 'ожидается'}</strong>
+        </div>
+
+        <details className="soundTester">
+          <summary>Проверить сигналы</summary>
+          <div className="soundTestGrid">
+            {soundNames.map((name) => (
+              <button key={name} type="button" onClick={() => void voice.testSound(name)}>
+                {soundLabels[name]}
+              </button>
+            ))}
+          </div>
+        </details>
+      </div>
+
+      {!voice.recognitionSupported && (
+        <div className="voiceNotice" role="status">
+          В этом браузере нет Web Speech API. Голосовые команды недоступны, но большие кнопки работают.
+        </div>
+      )}
+      {voice.voiceError && (
+        <div className="voiceNotice isError" role="alert">
+          {voice.voiceError}
+        </div>
+      )}
+
       {current ? (
         <div className="pickerWorkspace">
           <article className="pickerCurrent">
@@ -1020,8 +1185,21 @@ function PickerView() {
               <span>Заказ №{current.order.documentNumber}</span>
               <span>{current.groupKey}</span>
             </div>
-            <p className="pickerPosition">Позиция {current.sortIndex + 1}</p>
+            <div className="pickerProgressLine">
+              <strong className="pickerProgressValue">
+                {currentPosition} из {sessionTotal || queue.summary.total}
+              </strong>
+              <span className="pickerProgressRemaining">осталось {queue.summary.total}</span>
+            </div>
+            {current.pickType === 'PIECE' && <div className="pieceBanner">Штучный товар</div>}
+            {reviewBlocked && <div className="reviewBanner">Требуется решение администратора</div>}
             <h3>{current.name}</h3>
+            <div className={`pickerHeroQuantity is-${current.pickType.toLowerCase()}`}>
+              <strong className="pickerQuantityValue">{quantity(current.pickQuantity)}</strong>
+              <span className="pickerQuantityUnit">
+                {current.pickType === 'PACKAGE' ? 'упаковок' : 'штук'}
+              </span>
+            </div>
             <div className="pickerFacts">
               <div>
                 <span className="pickerFactLabel">Штрихкод</span>
@@ -1044,43 +1222,43 @@ function PickerView() {
                 </strong>
               </div>
             </div>
-            {current.status === 'ASSIGNED' ? (
+            <div className="pickerActions voiceActions">
               <button
-                className="pickerStart"
+                className="picked"
                 type="button"
-                disabled={busy}
-                onClick={() => void setItemStatus(current, 'ACTIVE')}
+                disabled={busy || reviewBlocked}
+                onClick={() => void voice.performStatus('PICKED')}
               >
-                Начать позицию
+                Взял
               </button>
-            ) : (
-              <div className="pickerActions">
-                <button
-                  className="picked"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void setItemStatus(current, 'PICKED')}
-                >
-                  Взял
-                </button>
-                <button
-                  className="missing"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void setItemStatus(current, 'NOT_FOUND')}
-                >
-                  Не нашёл
-                </button>
-                <button
-                  className="skipped"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void setItemStatus(current, 'SKIPPED')}
-                >
-                  Пропустить
-                </button>
-              </div>
-            )}
+              <button className="repeat" type="button" disabled={busy} onClick={() => void voice.repeat()}>
+                Повторить
+              </button>
+              <button
+                className="missing"
+                type="button"
+                disabled={busy || reviewBlocked}
+                onClick={() => void voice.performStatus('NOT_FOUND')}
+              >
+                Не нашёл
+              </button>
+              <button
+                className="skipped"
+                type="button"
+                disabled={busy || reviewBlocked}
+                onClick={() => void voice.performStatus('SKIPPED')}
+              >
+                Пропустить
+              </button>
+              <button
+                className="undoAction"
+                type="button"
+                disabled={busy || !queue.lastCompleted}
+                onClick={() => void voice.undo()}
+              >
+                Отменить
+              </button>
+            </div>
           </article>
 
           <aside className="pickerQueuePanel">
@@ -1114,7 +1292,7 @@ function PickerView() {
       )}
 
       {queue.lastCompleted && (
-        <button type="button" className="pickerUndo" disabled={busy} onClick={() => void undoLast()}>
+        <button type="button" className="pickerUndo" disabled={busy} onClick={() => void voice.undo()}>
           Отменить последнее: {queue.lastCompleted.name}
         </button>
       )}
