@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { soundPatterns } from '../../admin/src/audio/soundPlayer';
 import { confirmedStatusSounds, itemAnnouncementSounds } from '../../admin/src/picker/voicePickerController';
 import { canExecuteVoiceCommand, parseVoiceCommand } from '../../admin/src/voice/commandParser';
@@ -13,6 +13,7 @@ import {
   DEFAULT_SPEECH_RATE,
   sanitizeProductNameForSpeech,
 } from '../../admin/src/voice/speechSynthesis';
+import { speakWithFallback } from '../../admin/src/voice/yandexSpeech';
 
 describe('parseVoiceCommand', () => {
   it.each([
@@ -170,5 +171,41 @@ describe('picker success sound flow', () => {
   it('plays one piece signal after accepted when the next item is PIECE', () => {
     const sounds = [...confirmedStatusSounds('PICKED'), ...itemAnnouncementSounds({ pickType: 'PIECE' })];
     expect(sounds).toEqual(['accepted', 'piece']);
+  });
+});
+
+describe('Yandex speech fallback', () => {
+  it('uses the system TTS with the same phrase when the provider fails', async () => {
+    const speakWithYandex = vi.fn(async () => {
+      throw new Error('mock provider failure');
+    });
+    const speakWithSystem = vi.fn(async () => true);
+
+    const result = await speakWithFallback({
+      source: 'yandex',
+      yandexEnabled: true,
+      text: 'ПЛИТКА Alpen Gold. два блока.',
+      speakWithYandex,
+      speakWithSystem,
+    });
+
+    expect(result).toEqual({ spoken: true, source: 'system', fallback: true });
+    expect(speakWithSystem).toHaveBeenCalledWith('ПЛИТКА Alpen Gold. два блока.');
+  });
+
+  it('does not invoke the system TTS after successful Yandex playback', async () => {
+    const speakWithYandex = vi.fn(async () => true);
+    const speakWithSystem = vi.fn(async () => true);
+
+    const result = await speakWithFallback({
+      source: 'yandex',
+      yandexEnabled: true,
+      text: 'Товар. одна штука.',
+      speakWithYandex,
+      speakWithSystem,
+    });
+
+    expect(result).toEqual({ spoken: true, source: 'yandex', fallback: false });
+    expect(speakWithSystem).not.toHaveBeenCalled();
   });
 });
