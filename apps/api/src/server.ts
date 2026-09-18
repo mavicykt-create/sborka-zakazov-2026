@@ -1,12 +1,22 @@
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import { Prisma } from '@prisma/client';
 import Fastify from 'fastify';
 import { ZodError, z } from 'zod';
+import { validateProductionEnvironment } from './config.js';
 import { db } from './db.js';
 import { getAnalytics } from './modules/analytics/analyticsService.js';
+import {
+  ADMIN_SESSION_COOKIE,
+  AdminAuthError,
+  AdminAuthService,
+  type AdminSession,
+} from './modules/auth/adminAuth.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
 import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modules/orders/importService.js';
 import {
@@ -129,6 +139,12 @@ const pickerLoginSchema = z.object({
   login: z.string().trim().min(1).max(40),
   password: z.string().min(1).max(200),
 });
+const adminLoginSchema = z
+  .object({
+    username: z.string().trim().min(1).max(100),
+    password: z.string().min(1).max(500),
+  })
+  .strict();
 const pickerStatusSchema = z.object({
   status: z.enum(['ACTIVE', 'PICKED', 'NOT_FOUND', 'SKIPPED']),
   deviceAt: z.string().datetime().optional(),
@@ -139,19 +155,79 @@ const pickerSpeechSchema = z.object({ text: z.string() }).strict();
 type BuildAppOptions = {
   speechKitService?: YandexSpeechKitService;
   authenticatePicker?: typeof authenticatePicker;
+  loginPicker?: typeof loginPicker;
+  adminAuthService?: AdminAuthService;
+  frontendRoot?: string | false;
 };
+
+export const DEFAULT_FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../admin/dist');
+
+function isBackendPath(url: string): boolean {
+  const pathname = url.split('?')[0];
+  return (
+    pathname === '/api' ||
+    pathname.startsWith('/api/') ||
+    pathname === '/health' ||
+    pathname.startsWith('/health/')
+  );
+}
+
+const adminApiPaths = [
+  '/api/orders',
+  '/api/order-items',
+  '/api/workers',
+  '/api/dashboard',
+  '/api/analytics',
+  '/api/imports',
+  '/api/problems',
+  '/api/settings',
+];
+
+function isAdminApiPath(url: string): boolean {
+  const pathname = url.split('?')[0];
+  return adminApiPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function publicAdminSession(session: AdminSession) {
+  return { admin: { username: session.username }, expiresAt: session.expiresAt };
+}
 
 export async function buildApp(options: BuildAppOptions = {}) {
   const speechKitService = options.speechKitService ?? new YandexSpeechKitService();
   const authenticatePickerRequest = options.authenticatePicker ?? authenticatePicker;
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
-  await app.register(cors, { origin: process.env.ADMIN_ORIGIN ?? true });
+  const loginPickerRequest = options.loginPicker ?? loginPicker;
+  const adminAuthService = options.adminAuthService ?? new AdminAuthService();
+  const app = Fastify({
+    logger: process.env.NODE_ENV !== 'test',
+    trustProxy: process.env.NODE_ENV === 'production',
+  });
+  const corsOrigin = process.env.ADMIN_ORIGIN ?? process.env.NODE_ENV !== 'production';
+  await app.register(cors, { origin: corsOrigin, credentials: true });
+  await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
+
+  const adminCookieOptions = {
+    path: '/',
+    httpOnly: true,
+    secure: adminAuthService.production,
+    sameSite: 'strict' as const,
+    maxAge: 12 * 60 * 60,
+  };
+
+  app.addHook('onRequest', async (request) => {
+    if (isAdminApiPath(request.url)) {
+      adminAuthService.authenticate(request.cookies[ADMIN_SESSION_COOKIE]);
+    }
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) {
       const details = error.issues.map((issue) => issue.message).join('; ');
       return reply.code(400).send({ error: `Ошибка валидации: ${details}` });
+    }
+    if (error instanceof AdminAuthError) {
+      if (error.retryAfterSeconds) reply.header('Retry-After', error.retryAfterSeconds);
+      return reply.code(error.statusCode).send({ error: error.message });
     }
     if (error instanceof WorkflowError) return reply.code(error.statusCode).send({ error: error.message });
     if (error instanceof SpeechTextValidationError || error instanceof SpeechProviderError) {
@@ -164,7 +240,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return reply.code(500).send({ error: 'Внутренняя ошибка сервера' });
   });
 
-  app.get('/health', async (_request, reply) => {
+  app.get('/health', async () => ({ ok: true, service: 'assembly-orders-2026' }));
+
+  app.get('/health/ready', async (_request, reply) => {
     try {
       await db.$queryRaw`SELECT 1`;
       return { ok: true, service: 'assembly-orders-2026', database: 'connected' };
@@ -173,6 +251,28 @@ export async function buildApp(options: BuildAppOptions = {}) {
       return reply.code(503).send({ ok: false, service: 'assembly-orders-2026', database: 'unavailable' });
     }
   });
+
+  app.post<{ Body: unknown }>('/api/admin/login', async (request, reply) => {
+    const body = adminLoginSchema.parse(request.body);
+    const { token, session } = adminAuthService.login(body.username, body.password, request.ip);
+    return reply.setCookie(ADMIN_SESSION_COOKIE, token, adminCookieOptions).send(publicAdminSession(session));
+  });
+
+  app.post('/api/admin/logout', async (request, reply) => {
+    adminAuthService.logout(request.cookies[ADMIN_SESSION_COOKIE]);
+    return reply
+      .clearCookie(ADMIN_SESSION_COOKIE, {
+        path: adminCookieOptions.path,
+        httpOnly: adminCookieOptions.httpOnly,
+        secure: adminCookieOptions.secure,
+        sameSite: adminCookieOptions.sameSite,
+      })
+      .send({ ok: true });
+  });
+
+  app.get('/api/admin/me', async (request) =>
+    publicAdminSession(adminAuthService.authenticate(request.cookies[ADMIN_SESSION_COOKIE])),
+  );
 
   app.post('/api/orders/import-xlsx', async (request, reply) => {
     const file = await request.file();
@@ -195,7 +295,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.post<{ Body: unknown }>('/api/picker/login', async (request) => {
     const body = pickerLoginSchema.parse(request.body);
-    return loginPicker(body.login, body.password);
+    return loginPickerRequest(body.login, body.password);
   });
   app.post('/api/picker/logout', async (request) => logoutPicker(request.headers.authorization));
   app.get('/api/picker/me', async (request) => {
@@ -331,10 +431,25 @@ export async function buildApp(options: BuildAppOptions = {}) {
     async (request) => resolveProblem(request.params.id, resolveProblemSchema.parse(request.body)),
   );
 
+  const frontendRoot = options.frontendRoot === undefined ? DEFAULT_FRONTEND_ROOT : options.frontendRoot;
+  if (frontendRoot && existsSync(join(frontendRoot, 'index.html'))) {
+    await app.register(fastifyStatic, { root: frontendRoot, wildcard: false });
+    app.setNotFoundHandler((request, reply) => {
+      if (isBackendPath(request.url) || (request.method !== 'GET' && request.method !== 'HEAD')) {
+        return reply.code(404).send({ error: 'Маршрут не найден' });
+      }
+      return reply.type('text/html; charset=utf-8').sendFile('index.html');
+    });
+  }
+
   return app;
 }
 
 async function start() {
+  validateProductionEnvironment();
+  if (process.env.NODE_ENV === 'production' && !existsSync(join(DEFAULT_FRONTEND_ROOT, 'index.html'))) {
+    throw new Error(`Production frontend build is missing: ${DEFAULT_FRONTEND_ROOT}`);
+  }
   const app = await buildApp();
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ port, host: '0.0.0.0' });
