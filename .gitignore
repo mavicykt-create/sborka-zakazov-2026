@@ -8,3 +8,12 @@ coverage/
 *.log
 .DS_Store
 apps/api/prisma/dev.db
+apps/android-picker/.gradle/
+apps/android-picker/.idea/
+apps/android-picker/.kotlin/
+apps/android-picker/build/
+apps/android-picker/app/build/
+apps/android-picker/captures/
+apps/android-picker/local.properties
+*.jks
+*.keystore

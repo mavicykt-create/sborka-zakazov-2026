@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.SborkaPicker" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#153E35</item>
+        <item name="android:navigationBarColor">#F4F0E5</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

@@ -1,7 +1,12 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
-    "includes": ["apps/**", "!apps/**/dist/**", "!apps/**/node_modules/**"]
+    "includes": [
+      "apps/**",
+      "!apps/**/dist/**",
+      "!apps/**/node_modules/**",
+      "!apps/android-picker/**/build/**"
+    ]
   },
   "formatter": {
     "enabled": true,
