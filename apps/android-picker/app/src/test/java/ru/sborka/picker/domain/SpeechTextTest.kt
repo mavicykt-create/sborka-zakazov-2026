@@ -24,6 +24,33 @@ class SpeechTextTest {
         assertEquals("Товар вкус", sanitizeProductName("Товар () [] {} вкус"))
     }
     @Test
+    fun `does not pronounce service markers`() {
+        assertEquals(
+            "Печенье Oreo 228г",
+            sanitizeProductName("ПЧН Печенье Oreo МКШ 228г МРМ"),
+        )
+    }
+
+    @Test
+    fun `maps known warehouse categories to spoken names`() {
+        assertEquals("Печенье", categorySpeech(testItem().copy(groupKey = "ПЧН", name = "ПЧН Oreo")))
+        assertEquals("Мармелад", categorySpeech(testItem().copy(groupKey = "МРМ", name = "МРМ Fruittella")))
+        assertEquals(
+            "Шоколадные батончики",
+            categorySpeech(testItem().copy(groupKey = "Шоколадные", name = "Шоколадные батончики Snickers")),
+        )
+        assertEquals(
+            "Жевательные резинки",
+            categorySpeech(testItem().copy(groupKey = "Жевательные", name = "Жевательные резинки Orbit")),
+        )
+        assertEquals(
+            "Жевательные конфеты",
+            categorySpeech(testItem().copy(groupKey = "Жевательные", name = "Жевательные конфеты Mamba")),
+        )
+        assertEquals("Кофе", categorySpeech(testItem().copy(groupKey = "Кофе", name = "Кофе Jardin")))
+    }
+
+    @Test
     fun `builds piece phrase`() {
         val speech = itemSpeech(testItem(pickType = ru.sborka.picker.data.PickType.PIECE, pickQuantity = 7.0), true)
         assertEquals("Штучный товар. Товар. семь штук.", speech)
