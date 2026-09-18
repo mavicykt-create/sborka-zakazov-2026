@@ -154,6 +154,102 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
     expect(Object.values(counts).sort()).toEqual([16, 16, 16]);
     expect(assignedOrder.items.every((item) => item.status === 'ASSIGNED')).toBe(true);
 
+    const missingSession = await app.inject({ method: 'GET', url: '/api/picker/queue' });
+    expect(missingSession.statusCode).toBe(401);
+
+    const rejectedLogin = await app.inject({
+      method: 'POST',
+      url: '/api/picker/login',
+      payload: { login: logins[0], password: 'wrong-password' },
+    });
+    expect(rejectedLogin.statusCode).toBe(401);
+    expect(rejectedLogin.json<{ error: string }>().error).toBe('Неверный логин или пароль');
+
+    const pickerLogin = await app.inject({
+      method: 'POST',
+      url: '/api/picker/login',
+      payload: { login: logins[0], password: 'integration-pass-123' },
+    });
+    expect(pickerLogin.statusCode).toBe(200);
+    expect(pickerLogin.body).not.toContain('passwordHash');
+    const pickerToken = pickerLogin.json<{ token: string }>().token;
+    const authorization = { authorization: `Bearer ${pickerToken}` };
+
+    const pickerMe = await app.inject({ method: 'GET', url: '/api/picker/me', headers: authorization });
+    expect(pickerMe.statusCode).toBe(200);
+    expect(pickerMe.json<{ worker: { login: string } }>().worker.login).toBe(logins[0]);
+    expect(pickerMe.body).not.toContain('passwordHash');
+
+    const pickerQueue = await app.inject({
+      method: 'GET',
+      url: '/api/picker/queue',
+      headers: authorization,
+    });
+    expect(pickerQueue.statusCode).toBe(200);
+    expect(pickerQueue.json<{ items: unknown[]; summary: { total: number } }>().items).toHaveLength(16);
+    expect(pickerQueue.json<{ summary: { total: number } }>().summary.total).toBe(16);
+    expect(pickerQueue.body).not.toContain('passwordHash');
+
+    const ownItemId = pickerQueue.json<{ items: Array<{ id: string }> }>().items[0].id;
+    const pickerStarted = await app.inject({
+      method: 'PATCH',
+      url: `/api/picker/items/${ownItemId}/status`,
+      headers: authorization,
+      payload: { status: 'ACTIVE' },
+    });
+    expect(pickerStarted.statusCode).toBe(200);
+    const pickerUndone = await app.inject({
+      method: 'POST',
+      url: `/api/picker/items/${ownItemId}/undo`,
+      headers: authorization,
+    });
+    expect(pickerUndone.statusCode).toBe(200);
+
+    const otherWorkerItem = assignedOrder.items.find((item) => item.assignedWorkerId !== workers[0].id);
+    expect(otherWorkerItem).toBeTruthy();
+    const forbiddenItem = await app.inject({
+      method: 'PATCH',
+      url: `/api/picker/items/${otherWorkerItem?.id}/status`,
+      headers: authorization,
+      payload: { status: 'ACTIVE' },
+    });
+    expect(forbiddenItem.statusCode).toBe(403);
+
+    const passwordChanged = await app.inject({
+      method: 'PATCH',
+      url: `/api/workers/${workers[0].id}`,
+      payload: { password: 'integration-pass-456' },
+    });
+    expect(passwordChanged.statusCode).toBe(200);
+    const passwordRevokedSession = await app.inject({
+      method: 'GET',
+      url: '/api/picker/queue',
+      headers: authorization,
+    });
+    expect(passwordRevokedSession.statusCode).toBe(401);
+
+    const pickerRelogin = await app.inject({
+      method: 'POST',
+      url: '/api/picker/login',
+      payload: { login: logins[0], password: 'integration-pass-456' },
+    });
+    expect(pickerRelogin.statusCode).toBe(200);
+    const refreshedAuthorization = {
+      authorization: `Bearer ${pickerRelogin.json<{ token: string }>().token}`,
+    };
+    const pickerLogout = await app.inject({
+      method: 'POST',
+      url: '/api/picker/logout',
+      headers: refreshedAuthorization,
+    });
+    expect(pickerLogout.statusCode).toBe(200);
+    const revokedSession = await app.inject({
+      method: 'GET',
+      url: '/api/picker/queue',
+      headers: refreshedAuthorization,
+    });
+    expect(revokedSession.statusCode).toBe(401);
+
     for (const item of assignedOrder.items) {
       const active = await app.inject({
         method: 'PATCH',
