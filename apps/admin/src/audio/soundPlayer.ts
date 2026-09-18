@@ -9,17 +9,11 @@ export const soundLabels: Record<SoundName, string> = {
   completed: 'Очередь собрана',
 };
 
-type Tone = { frequency: number; delay: number; duration: number; volume?: number };
+export type Tone = { frequency: number; delay: number; duration: number; volume?: number };
 
-const patterns: Record<SoundName, Tone[]> = {
-  accepted: [
-    { frequency: 523, delay: 0, duration: 0.09 },
-    { frequency: 659, delay: 0.1, duration: 0.12 },
-  ],
-  piece: [
-    { frequency: 740, delay: 0, duration: 0.09 },
-    { frequency: 740, delay: 0.14, duration: 0.09 },
-  ],
+export const soundPatterns: Record<SoundName, Tone[]> = {
+  accepted: [{ frequency: 659, delay: 0, duration: 0.1, volume: 0.065 }],
+  piece: [{ frequency: 880, delay: 0, duration: 0.09, volume: 0.055 }],
   problem: [
     { frequency: 440, delay: 0, duration: 0.1 },
     { frequency: 330, delay: 0.11, duration: 0.14 },
@@ -59,7 +53,7 @@ export class SoundPlayer {
 
       const startedAt = this.context.currentTime + 0.01;
       let totalSeconds = 0;
-      for (const tone of patterns[name]) {
+      for (const tone of soundPatterns[name]) {
         const oscillator = this.context.createOscillator();
         const gain = this.context.createGain();
         const toneStart = startedAt + tone.delay;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { confirmedStatusSounds } from '../../admin/src/picker/voicePickerController';
+import { soundPatterns } from '../../admin/src/audio/soundPlayer';
+import { confirmedStatusSounds, itemAnnouncementSounds } from '../../admin/src/picker/voicePickerController';
 import { canExecuteVoiceCommand, parseVoiceCommand } from '../../admin/src/voice/commandParser';
 import {
   configurePausedRecognition,
@@ -150,9 +151,24 @@ describe('sanitizeProductNameForSpeech', () => {
 });
 
 describe('picker success sound flow', () => {
-  it('plays exactly one accepted sound and never a next signal', () => {
-    const sounds = confirmedStatusSounds('PICKED');
+  it.each([
+    ['accepted', 0.08, 0.12],
+    ['piece', 0.08, 0.12],
+  ] as const)('uses one short impulse for %s', (name, minimumDuration, maximumDuration) => {
+    expect(soundPatterns[name]).toHaveLength(1);
+    expect(soundPatterns[name][0]?.delay).toBe(0);
+    expect(soundPatterns[name][0]?.duration).toBeGreaterThanOrEqual(minimumDuration);
+    expect(soundPatterns[name][0]?.duration).toBeLessThanOrEqual(maximumDuration);
+  });
+
+  it('plays only accepted before an ordinary next item', () => {
+    const sounds = [...confirmedStatusSounds('PICKED'), ...itemAnnouncementSounds({ pickType: 'PACKAGE' })];
     expect(sounds).toEqual(['accepted']);
     expect(sounds).not.toContain('next');
+  });
+
+  it('plays one piece signal after accepted when the next item is PIECE', () => {
+    const sounds = [...confirmedStatusSounds('PICKED'), ...itemAnnouncementSounds({ pickType: 'PIECE' })];
+    expect(sounds).toEqual(['accepted', 'piece']);
   });
 });

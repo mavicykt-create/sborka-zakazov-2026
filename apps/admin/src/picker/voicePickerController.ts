@@ -70,6 +70,10 @@ export function confirmedStatusSounds(status: 'PICKED' | 'NOT_FOUND' | 'SKIPPED'
   return [status === 'PICKED' ? 'accepted' : 'problem'];
 }
 
+export function itemAnnouncementSounds(item: Pick<VoicePickerItem, 'pickType'>): SoundName[] {
+  return item.pickType === 'PIECE' ? ['piece'] : [];
+}
+
 export function useVoicePickerController(options: VoicePickerOptions) {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [soundsEnabled, setSoundsEnabled] = useState(true);
@@ -149,7 +153,9 @@ export function useVoicePickerController(options: VoicePickerOptions) {
         return;
       }
       setVoiceError('');
-      if (withPieceSignal && item.pickType === 'PIECE') await play('piece');
+      if (withPieceSignal) {
+        for (const sound of itemAnnouncementSounds(item)) await play(sound);
+      }
       const phrase = buildItemSpeech(item, shortNamesRef.current);
       if (phrase && (enabledRef.current || forceSpeech)) await speak(phrase);
     },
@@ -165,7 +171,7 @@ export function useVoicePickerController(options: VoicePickerOptions) {
         setMicState('paused');
         return;
       }
-      if (enabledRef.current) await announce(snapshot.current, false);
+      if (enabledRef.current) await announce(snapshot.current);
     },
     [announce, play, speak],
   );
