@@ -10,15 +10,18 @@ const runDatabaseTests = process.env.RUN_DB_TESTS === '1';
 describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
   let app: FastifyInstance;
   const logins = ['it-anna', 'it-boris', 'it-vera'];
+  const importFilenames = ['sample-order-12293.xlsx', 'broken-order.xlsx'];
 
   beforeAll(async () => {
     app = await buildApp();
     await db.order.deleteMany({ where: { documentNumber: '12293', warehouse: 'Основной склад' } });
+    await db.importAttempt.deleteMany({ where: { filename: { in: importFilenames } } });
     await db.worker.deleteMany({ where: { login: { in: [...logins, 'it-off-shift'] } } });
   });
 
   afterAll(async () => {
     await db.order.deleteMany({ where: { documentNumber: '12293', warehouse: 'Основной склад' } });
+    await db.importAttempt.deleteMany({ where: { filename: { in: importFilenames } } });
     await db.worker.deleteMany({ where: { login: { in: [...logins, 'it-off-shift'] } } });
     await app.close();
     await db.$disconnect();
@@ -68,6 +71,46 @@ describe.runIf(runDatabaseTests)('warehouse workflow integration', () => {
     expect(imported.statusCode).toBe(201);
     const importedOrder = imported.json<{ order: { id: string; items: unknown[] } }>().order;
     expect(importedOrder.items).toHaveLength(48);
+
+    const duplicateForm = new FormData();
+    duplicateForm.append('file', new Blob([file]), 'sample-order-12293.xlsx');
+    const duplicateSerialized = new Request('http://localhost', { method: 'POST', body: duplicateForm });
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/orders/import-xlsx',
+      headers: Object.fromEntries(duplicateSerialized.headers.entries()),
+      payload: Buffer.from(await duplicateSerialized.arrayBuffer()),
+    });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json<{ duplicate: boolean }>().duplicate).toBe(true);
+
+    const brokenForm = new FormData();
+    brokenForm.append('file', new Blob([Buffer.from('not an xlsx workbook')]), 'broken-order.xlsx');
+    const brokenSerialized = new Request('http://localhost', { method: 'POST', body: brokenForm });
+    const broken = await app.inject({
+      method: 'POST',
+      url: '/api/orders/import-xlsx',
+      headers: Object.fromEntries(brokenSerialized.headers.entries()),
+      payload: Buffer.from(await brokenSerialized.arrayBuffer()),
+    });
+    expect(broken.statusCode).toBe(400);
+    expect(broken.json<{ error: string }>().error).toContain('Ошибка импорта XLSX');
+
+    const importLog = await app.inject({ method: 'GET', url: '/api/imports?limit=10' });
+    expect(importLog.statusCode).toBe(200);
+    expect(importLog.json<Array<{ status: string }>>().map((attempt) => attempt.status)).toEqual(
+      expect.arrayContaining(['SUCCESS', 'DUPLICATE', 'FAILED']),
+    );
+    const failedImports = await app.inject({ method: 'GET', url: '/api/imports?status=FAILED&limit=10' });
+    expect(failedImports.statusCode).toBe(200);
+    const failedImportLog = failedImports.json<Array<{ status: string }>>();
+    expect(failedImportLog.length).toBeGreaterThan(0);
+    expect(failedImportLog.every((attempt) => attempt.status === 'FAILED')).toBe(true);
+
+    const dashboard = await app.inject({ method: 'GET', url: '/api/dashboard' });
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.json<{ imports: { failed24h: number } }>().imports.failed24h).toBeGreaterThanOrEqual(1);
+    expect(dashboard.body).not.toContain('passwordHash');
 
     const reviewTarget = importedOrder.items[1] as { id: string };
     await db.orderItem.update({ where: { id: reviewTarget.id }, data: { pickType: 'REVIEW' } });
