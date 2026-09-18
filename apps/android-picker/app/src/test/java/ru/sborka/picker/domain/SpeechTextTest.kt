@@ -8,7 +8,7 @@ import ru.sborka.picker.testItem
 
 class SpeechTextTest {
     @Test
-    fun `removes packaging schemes and hieroglyphs but keeps useful digits`() {
+    fun \`removes packaging schemes and hieroglyphs but keeps useful digits\`() {
         val value = sanitizeProductName("КОФЕ 3в1 1/12/12 13гр 漢字 250мл 6х12")
 
         assertTrue(value.contains("3в1"))
@@ -20,20 +20,25 @@ class SpeechTextTest {
     }
 
     @Test
-    fun `builds piece phrase`() {
+    fun \`removes empty bracket groups with Android compatible regex\`() {
+        assertEquals("Товар вкус", sanitizeProductName("Товар () [] {} вкус"))
+    }
+
+    @Test
+    fun \`builds piece phrase\`() {
         val speech = itemSpeech(testItem(pickType = ru.sborka.picker.data.PickType.PIECE, pickQuantity = 7.0), true)
         assertEquals("Штучный товар. Товар. семь штук.", speech)
     }
 
     @Test
-    fun `safety cleanup applies when short names are disabled`() {
+    fun \`safety cleanup applies when short names are disabled\`() {
         val item = testItem().copy(name = "КОФЕ 3в1 1/24 漢字 250мл")
 
         assertEquals("КОФЕ 3в1 250мл. два блока.", itemSpeech(item, false))
     }
 
     @Test
-    fun `uses correct unit for decimal quantity`() {
+    fun \`uses correct unit for decimal quantity\`() {
         assertEquals("1,5 блока", quantitySpeech(testItem(pickQuantity = 1.5)))
     }
 }
