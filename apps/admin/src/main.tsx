@@ -173,6 +173,7 @@ type PickerQueue = {
   lastCompleted: (PickerItem & { eventType: string; completedAt: string }) | null;
 };
 type PickerLogin = { token: string; expiresAt: string; worker: PickerWorker };
+type PickerSpeechSettings = { yandexEnabled: boolean; voice: string };
 type Section =
   | 'dashboard'
   | 'orders'
@@ -829,6 +830,7 @@ function PickerView() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [sessionTotal, setSessionTotal] = useState(0);
+  const [speechSettings, setSpeechSettings] = useState<PickerSpeechSettings | null>(null);
 
   async function pickerRequest<T>(path: string, init?: RequestInit) {
     return requestJson<T>(`${API}${path}`, {
@@ -847,6 +849,22 @@ function PickerView() {
     setQueue(nextQueue);
     setSessionTotal((currentTotal) => Math.max(currentTotal, nextQueue.summary.total));
     return nextQueue;
+  }
+
+  async function requestYandexSpeech(text: string) {
+    const response = await fetch(`${API}/api/picker/speech`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(data?.error ?? `Ошибка HTTP ${response.status}`);
+    }
+    return response.blob();
   }
 
   function queueAfterConfirmedStatus(
@@ -894,6 +912,7 @@ function PickerView() {
   useEffect(() => {
     if (!token) {
       setQueue(null);
+      setSpeechSettings(null);
       return;
     }
     void requestJson<PickerQueue>(`${API}/api/picker/queue`, {
@@ -910,6 +929,15 @@ function PickerView() {
           setToken('');
         }
       });
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    void requestJson<PickerSpeechSettings>(`${API}/api/picker/speech/settings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(setSpeechSettings)
+      .catch(() => setSpeechSettings({ yandexEnabled: false, voice: 'alena' }));
   }, [token]);
 
   async function login(event: React.FormEvent) {
@@ -943,6 +971,7 @@ function PickerView() {
       sessionStorage.removeItem('pickerToken');
       setToken('');
       setQueue(null);
+      setSpeechSettings(null);
       setSessionTotal(0);
       setMessage('');
       setBusy(false);
@@ -1024,6 +1053,11 @@ function PickerView() {
     onUndo: async () => {
       const nextQueue = await undoLast();
       return nextQueue ? toVoiceSnapshot(nextQueue) : null;
+    },
+    yandexSpeech: {
+      enabled: speechSettings?.yandexEnabled ?? false,
+      settingsLoaded: speechSettings !== null,
+      requestAudio: requestYandexSpeech,
     },
   });
 
@@ -1169,6 +1203,18 @@ function PickerView() {
 
         <div className="voiceSettings">
           <label>
+            <span>Источник голоса</span>
+            <select
+              value={voice.speechSource}
+              onChange={(event) => voice.setSpeechSource(event.target.value as 'system' | 'yandex')}
+            >
+              <option value="system">Голос телефона</option>
+              <option value="yandex" disabled={!speechSettings?.yandexEnabled}>
+                Alena — Yandex SpeechKit{speechSettings?.yandexEnabled ? '' : ' (недоступна)'}
+              </option>
+            </select>
+          </label>
+          <label>
             <span>Скорость речи</span>
             <select
               value={voice.speechRate}
@@ -1220,6 +1266,11 @@ function PickerView() {
       {voice.voiceError && (
         <div className="voiceNotice isError" role="alert">
           {voice.voiceError}
+        </div>
+      )}
+      {voice.speechNotice && (
+        <div className="voiceNotice" role="status">
+          {voice.speechNotice}
         </div>
       )}
 

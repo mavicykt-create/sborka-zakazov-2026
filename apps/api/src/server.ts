@@ -18,6 +18,11 @@ import {
 } from './modules/picker/pickerService.js';
 import { createOrderReport } from './modules/reports/reportService.js';
 import {
+  SpeechProviderError,
+  SpeechTextValidationError,
+  YandexSpeechKitService,
+} from './modules/speech/yandexSpeechKitService.js';
+import {
   closeOrder,
   getOrderEventsPage,
   listOrderHistory,
@@ -129,8 +134,16 @@ const pickerStatusSchema = z.object({
   deviceAt: z.string().datetime().optional(),
 });
 const pickerUndoSchema = z.object({ deviceAt: z.string().datetime().optional() });
+const pickerSpeechSchema = z.object({ text: z.string() }).strict();
 
-export async function buildApp() {
+type BuildAppOptions = {
+  speechKitService?: YandexSpeechKitService;
+  authenticatePicker?: typeof authenticatePicker;
+};
+
+export async function buildApp(options: BuildAppOptions = {}) {
+  const speechKitService = options.speechKitService ?? new YandexSpeechKitService();
+  const authenticatePickerRequest = options.authenticatePicker ?? authenticatePicker;
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
   await app.register(cors, { origin: process.env.ADMIN_ORIGIN ?? true });
   await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
@@ -141,6 +154,9 @@ export async function buildApp() {
       return reply.code(400).send({ error: `Ошибка валидации: ${details}` });
     }
     if (error instanceof WorkflowError) return reply.code(error.statusCode).send({ error: error.message });
+    if (error instanceof SpeechTextValidationError || error instanceof SpeechProviderError) {
+      return reply.code(error.statusCode).send({ error: error.message });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return reply.code(409).send({ error: 'Запись с такими уникальными данными уже существует' });
     }
@@ -189,6 +205,20 @@ export async function buildApp() {
   app.get('/api/picker/queue', async (request) => {
     const session = await authenticatePicker(request.headers.authorization);
     return getPickerQueue(session.worker.id);
+  });
+  app.get('/api/picker/speech/settings', async (request) => {
+    await authenticatePickerRequest(request.headers.authorization);
+    return speechKitService.getPublicSettings();
+  });
+  app.post<{ Body: unknown }>('/api/picker/speech', async (request, reply) => {
+    await authenticatePickerRequest(request.headers.authorization);
+    const body = pickerSpeechSchema.parse(request.body);
+    const result = await speechKitService.synthesize(body.text);
+    return reply
+      .header('Content-Type', result.contentType)
+      .header('Cache-Control', 'private, max-age=300')
+      .header('X-Speech-Cache', result.cacheHit ? 'HIT' : 'MISS')
+      .send(result.audio);
   });
   app.patch<{ Params: { id: string }; Body: unknown }>('/api/picker/items/:id/status', async (request) => {
     const session = await authenticatePicker(request.headers.authorization);
