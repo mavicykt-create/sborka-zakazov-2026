@@ -9,14 +9,38 @@ private val feminine = listOf("", "одна", "две", "три", "четыре"
 private val teens = listOf("десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать")
 private val tens = listOf("", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто")
 private val hundreds = listOf("", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот")
+private val serviceMarkerRegex =
+    Regex("(?<![\\p{L}\\p{N}])(?:ПЧН|МРМ|МКШ)(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
 
 fun sanitizeProductName(name: String): String = name
     .replace(Regex("(?<![\\p{L}\\p{N}])\\d+\\s*(?:[/\\\\*xх]\\s*\\d+){1,2}(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE), " ")
     .replace(Regex("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]+"), " ")
+    .replace(serviceMarkerRegex, " ")
     .replace(Regex("\\(\\s*\\)|\\[\\s*\\]|\\{\\s*\\}"), " ")
     .replace(Regex("\\s+([,.;:!?])"), "$1")
     .trim(' ', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '-', '–', '—', '/', '\\', '*')
     .replace(Regex("\\s+"), " ")
+
+fun categorySpeech(item: PickerItem): String? {
+    val group = item.groupKey.trim().uppercase()
+    val name = item.name.uppercase()
+    val combined = "$group $name"
+
+    return when {
+        group == "ПЧН" || group.startsWith("ПЕЧЕН") || name.startsWith("ПЧН ") -> "Печенье"
+        group == "МРМ" || group.startsWith("МАРМ") || name.startsWith("МРМ ") -> "Мармелад"
+        group.startsWith("ПЛИТ") || combined.contains(" ПЛИТК") -> "Плитки"
+        group.startsWith("ЖИДК") || combined.contains("ЖИДКИЕ КОНФЕТ") -> "Жидкие конфеты"
+        group.startsWith("ПРИКАСС") || combined.contains("ПРИКАСС") -> "Прикасса"
+        (group.startsWith("ЖЕВАТЕЛ") || combined.contains("ЖЕВАТЕЛЬН")) && combined.contains("РЕЗИН") ->
+            "Жевательные резинки"
+        (group.startsWith("ЖЕВАТЕЛ") || combined.contains("ЖЕВАТЕЛЬН")) && combined.contains("КОНФЕТ") ->
+            "Жевательные конфеты"
+        combined.contains("БАТОН") && combined.contains("ШОКОЛАД") -> "Шоколадные батончики"
+        group.startsWith("КОФЕ") || name.startsWith("КОФЕ ") -> "Кофе"
+        else -> null
+    }
+}
 
 fun numberToRussian(value: Double, useFeminine: Boolean): String {
     val integer = value.toInt()

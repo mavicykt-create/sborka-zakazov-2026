@@ -332,9 +332,29 @@ private fun SettingsCard(settings: PickerSettings, alenaAvailable: Boolean, onSe
                     )
                 }
             }
-            SettingSwitch("Звук", settings.soundEnabled) { onSettings(settings.copy(soundEnabled = it)) }
-            SettingSwitch("Вибрация", settings.vibrationEnabled) { onSettings(settings.copy(vibrationEnabled = it)) }
+            SettingSwitch("Говорить категорию", settings.announceCategories) {
+                onSettings(settings.copy(announceCategories = it))
+            }
             SettingSwitch("Короткие названия", settings.shortNames) { onSettings(settings.copy(shortNames = it)) }
+
+            Text("ЗВУКОВЫЕ СИГНАЛЫ", color = Forest, fontSize = 13.sp, fontWeight = FontWeight.Black)
+            SettingSwitch("Все сигналы", settings.soundEnabled) { onSettings(settings.copy(soundEnabled = it)) }
+            SettingSwitch("Подтверждение «Взял»", settings.acceptedSoundEnabled) {
+                onSettings(settings.copy(acceptedSoundEnabled = it))
+            }
+            SettingSwitch("Штучный товар", settings.pieceSoundEnabled) {
+                onSettings(settings.copy(pieceSoundEnabled = it))
+            }
+            SettingSwitch("Проблема / не найдено", settings.problemSoundEnabled) {
+                onSettings(settings.copy(problemSoundEnabled = it))
+            }
+            SettingSwitch("Ошибка команды", settings.errorSoundEnabled) {
+                onSettings(settings.copy(errorSoundEnabled = it))
+            }
+            SettingSwitch("Заказ собран", settings.completedSoundEnabled) {
+                onSettings(settings.copy(completedSoundEnabled = it))
+            }
+            SettingSwitch("Вибрация", settings.vibrationEnabled) { onSettings(settings.copy(vibrationEnabled = it)) }
         }
     }
 }

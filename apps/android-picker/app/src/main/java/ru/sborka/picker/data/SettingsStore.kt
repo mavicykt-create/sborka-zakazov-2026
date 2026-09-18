@@ -18,8 +18,14 @@ data class PickerSettings(
     val voiceSource: VoiceSource = VoiceSource.ALENA,
     val speechRate: Float = DEFAULT_SPEECH_RATE,
     val soundEnabled: Boolean = true,
+    val acceptedSoundEnabled: Boolean = true,
+    val pieceSoundEnabled: Boolean = true,
+    val problemSoundEnabled: Boolean = true,
+    val errorSoundEnabled: Boolean = true,
+    val completedSoundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val shortNames: Boolean = true,
+    val announceCategories: Boolean = true,
 )
 
 interface PickerSettingsRepository {
@@ -35,8 +41,14 @@ class SettingsStore(private val context: Context) : PickerSettingsRepository {
             }.getOrDefault(VoiceSource.ALENA),
             speechRate = values[SPEECH_RATE] ?: DEFAULT_SPEECH_RATE,
             soundEnabled = values[SOUND_ENABLED] ?: true,
+            acceptedSoundEnabled = values[ACCEPTED_SOUND_ENABLED] ?: true,
+            pieceSoundEnabled = values[PIECE_SOUND_ENABLED] ?: true,
+            problemSoundEnabled = values[PROBLEM_SOUND_ENABLED] ?: true,
+            errorSoundEnabled = values[ERROR_SOUND_ENABLED] ?: true,
+            completedSoundEnabled = values[COMPLETED_SOUND_ENABLED] ?: true,
             vibrationEnabled = values[VIBRATION_ENABLED] ?: true,
             shortNames = values[SHORT_NAMES] ?: true,
+            announceCategories = values[ANNOUNCE_CATEGORIES] ?: true,
         )
     }
 
@@ -45,8 +57,14 @@ class SettingsStore(private val context: Context) : PickerSettingsRepository {
             preferences[VOICE_SOURCE] = value.voiceSource.name
             preferences[SPEECH_RATE] = value.speechRate
             preferences[SOUND_ENABLED] = value.soundEnabled
+            preferences[ACCEPTED_SOUND_ENABLED] = value.acceptedSoundEnabled
+            preferences[PIECE_SOUND_ENABLED] = value.pieceSoundEnabled
+            preferences[PROBLEM_SOUND_ENABLED] = value.problemSoundEnabled
+            preferences[ERROR_SOUND_ENABLED] = value.errorSoundEnabled
+            preferences[COMPLETED_SOUND_ENABLED] = value.completedSoundEnabled
             preferences[VIBRATION_ENABLED] = value.vibrationEnabled
             preferences[SHORT_NAMES] = value.shortNames
+            preferences[ANNOUNCE_CATEGORIES] = value.announceCategories
         }
     }
 
@@ -54,7 +72,13 @@ class SettingsStore(private val context: Context) : PickerSettingsRepository {
         val VOICE_SOURCE = stringPreferencesKey("voice_source")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
         val SOUND_ENABLED = booleanPreferencesKey("sound_enabled")
+        val ACCEPTED_SOUND_ENABLED = booleanPreferencesKey("accepted_sound_enabled")
+        val PIECE_SOUND_ENABLED = booleanPreferencesKey("piece_sound_enabled")
+        val PROBLEM_SOUND_ENABLED = booleanPreferencesKey("problem_sound_enabled")
+        val ERROR_SOUND_ENABLED = booleanPreferencesKey("error_sound_enabled")
+        val COMPLETED_SOUND_ENABLED = booleanPreferencesKey("completed_sound_enabled")
         val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         val SHORT_NAMES = booleanPreferencesKey("short_names")
+        val ANNOUNCE_CATEGORIES = booleanPreferencesKey("announce_categories")
     }
 }
