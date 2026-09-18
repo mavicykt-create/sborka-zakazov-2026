@@ -1466,6 +1466,180 @@ main {
 .pickerShell > .pickerMessage {
   margin: 18px 24px 0;
 }
+.voiceConsole {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(210px, 0.75fr) minmax(180px, 0.6fr) auto;
+  gap: 12px;
+  align-items: stretch;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #efece3;
+}
+.voiceSwitches {
+  display: flex;
+  gap: 9px;
+}
+.voiceStart,
+.soundSwitch {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 15px;
+  border: 1px solid #c6cfc7;
+  border-radius: 12px;
+  color: #27493f;
+  background: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+.voiceStart {
+  flex: 1;
+}
+.voiceStart.isOn {
+  border-color: #4f8d72;
+  background: #e0efe5;
+}
+.switchTrack {
+  position: relative;
+  width: 36px;
+  height: 21px;
+  flex: 0 0 auto;
+  border-radius: 99px;
+  background: #aeb9b1;
+}
+.switchTrack i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 160ms ease;
+}
+.isOn .switchTrack {
+  background: #287452;
+}
+.isOn .switchTrack i {
+  transform: translateX(15px);
+}
+.micStatus {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: #36584d;
+  background: #fff;
+}
+.voiceMetaLabel {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.voiceMetaValue {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+}
+.micStatus button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #315f50;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.micPulse {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #9ba9a0;
+}
+.micStatus.is-listening .micPulse {
+  background: #2f9b66;
+  box-shadow: 0 0 0 0 rgba(47, 155, 102, 0.45);
+  animation: listeningPulse 1.35s infinite;
+}
+.micStatus.is-speaking .micPulse {
+  background: #d98a32;
+}
+.micStatus.is-error .micPulse {
+  background: #b94c3f;
+}
+.voiceFeedback {
+  min-width: 0;
+  padding: 10px 13px;
+  border-radius: 12px;
+  background: #fff;
+}
+.voiceFeedback .voiceMetaValue {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.soundTester {
+  position: relative;
+  align-self: center;
+}
+.soundTester summary {
+  padding: 10px 12px;
+  border: 1px dashed #b99869;
+  border-radius: 9px;
+  color: #755124;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.soundTestGrid {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  width: 210px;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 35px rgba(23, 63, 52, 0.18);
+}
+.soundTester button {
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #315f50;
+  background: #edf2ed;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.voiceNotice {
+  margin: 14px 24px 0;
+  padding: 11px 14px;
+  border-left: 4px solid #c78330;
+  border-radius: 6px;
+  color: #6d4b20;
+  background: #faedcf;
+  font-size: 12px;
+  font-weight: 800;
+}
+.voiceNotice.isError {
+  border-left-color: #b94c3f;
+  color: #7e3028;
+  background: #f7dfdc;
+}
 .pickerWorkspace {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(330px, 0.75fr);
@@ -1492,12 +1666,70 @@ main {
   font-size: 12px;
   font-weight: 800;
 }
+.pickerProgressLine {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 28px 0 16px;
+  color: #36584d;
+}
+.pickerProgressValue {
+  font-family: Georgia, serif;
+  font-size: 25px;
+  font-weight: 500;
+}
+.pickerProgressRemaining {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.pieceBanner,
+.reviewBanner {
+  display: inline-flex;
+  margin-bottom: 13px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  color: #fff;
+  background: #ba652c;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.reviewBanner {
+  background: #a84035;
+}
 .pickerCurrent h3 {
   max-width: 830px;
   margin-bottom: 30px;
   font-size: clamp(27px, 4vw, 44px);
   font-weight: 500;
   line-height: 1.08;
+}
+.pickerHeroQuantity {
+  display: flex;
+  align-items: baseline;
+  gap: 13px;
+  margin: -8px 0 24px;
+  color: #19493a;
+}
+.pickerQuantityValue {
+  font-family: Georgia, serif;
+  font-size: clamp(58px, 8vw, 92px);
+  font-weight: 500;
+  line-height: 0.9;
+}
+.pickerQuantityUnit {
+  color: #6e7c75;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.pickerHeroQuantity.is-piece {
+  color: #a85125;
 }
 .pickerFacts {
   display: grid;
@@ -1551,6 +1783,28 @@ main {
 .pickerActions .skipped {
   color: #5f451e;
   background: #eabe73;
+}
+.pickerActions .repeat {
+  color: #315f50;
+  background: #dce8df;
+}
+.pickerActions .undoAction {
+  color: #775021;
+  background: #eee1cd;
+}
+.voiceActions {
+  grid-template-columns: 1.35fr 1fr 1fr;
+}
+.voiceActions button {
+  min-height: 68px;
+  font-size: 13px;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+.voiceActions button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+  opacity: 0.5;
 }
 .pickerQueuePanel {
   padding: 34px 28px;
@@ -1616,6 +1870,15 @@ main {
 }
 .pickerComplete p {
   color: var(--muted);
+}
+
+@keyframes listeningPulse {
+  70% {
+    box-shadow: 0 0 0 8px rgba(47, 155, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 155, 102, 0);
+  }
 }
 
 @keyframes enter {
@@ -1684,6 +1947,9 @@ main {
   .pickerWorkspace {
     grid-template-columns: 1fr;
   }
+  .voiceConsole {
+    grid-template-columns: 1fr 1fr;
+  }
   .pickerCurrent {
     min-height: auto;
     border-right: 0;
@@ -1739,6 +2005,21 @@ main {
   .pickerTopbar .ghost {
     grid-column: 1 / -1;
   }
+  .voiceConsole {
+    grid-template-columns: 1fr;
+    padding: 15px 16px;
+  }
+  .voiceSwitches {
+    flex-direction: column;
+  }
+  .voiceStart,
+  .soundSwitch {
+    width: 100%;
+  }
+  .soundTestGrid {
+    right: auto;
+    left: 0;
+  }
   .pickerCurrent {
     padding: 30px 20px;
   }
@@ -1750,6 +2031,14 @@ main {
   }
   .pickerActions {
     grid-template-columns: 1fr;
+  }
+  .voiceActions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .voiceActions .picked {
+    grid-column: 1 / -1;
+    min-height: 82px;
+    font-size: 17px;
   }
   .pickerQueuePanel {
     padding: 28px 20px;
