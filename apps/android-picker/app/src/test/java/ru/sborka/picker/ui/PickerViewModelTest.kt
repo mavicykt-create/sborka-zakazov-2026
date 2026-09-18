@@ -138,6 +138,29 @@ class PickerViewModelTest {
     }
 
     @Test
+    fun `category is announced once when entering a category`() = runTest(mainDispatcher.dispatcher) {
+        val first = testItem("i1").copy(groupKey = "ПЧН", name = "ПЧН Oreo")
+        val second = testItem("i2").copy(groupKey = "ПЧН", name = "ПЧН Choco Pie")
+        val repository = FakeRepository(testQueue(listOf(first))).apply {
+            completedQueue = testQueue(listOf(second), first)
+        }
+        val viewModel = PickerViewModel(repository, FakeSettings())
+        runCurrent()
+
+        val initial = viewModel.effects.first() as PickerEffect.Speak
+        assertTrue(initial.text.startsWith("Печенье. "))
+        assertFalse(initial.text.contains("ПЧН"))
+
+        viewModel.handleCommand(VoiceCommand.PICKED)
+        runCurrent()
+        val effects = viewModel.effects.take(3).toList()
+        val nextSpeech = effects[2] as PickerEffect.Speak
+
+        assertFalse(nextSpeech.text.startsWith("Печенье. "))
+        assertFalse(nextSpeech.text.contains("ПЧН"))
+    }
+
+    @Test
     fun `successful transition emits accepted before next piece announcement`() = runTest(mainDispatcher.dispatcher) {
         val first = testItem("i1")
         val piece = testItem("i2", pickType = ru.sborka.picker.data.PickType.PIECE)
