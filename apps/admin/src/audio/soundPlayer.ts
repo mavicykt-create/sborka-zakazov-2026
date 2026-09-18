@@ -1,17 +1,7 @@
-export type SoundName =
-  | 'accepted'
-  | 'next'
-  | 'repeat'
-  | 'piece'
-  | 'problem'
-  | 'unrecognized'
-  | 'error'
-  | 'completed';
+export type SoundName = 'accepted' | 'piece' | 'problem' | 'unrecognized' | 'error' | 'completed';
 
 export const soundLabels: Record<SoundName, string> = {
   accepted: 'Принято',
-  next: 'Следующая позиция',
-  repeat: 'Повтор',
   piece: 'Штучный товар',
   problem: 'Проблема',
   unrecognized: 'Не распознано',
@@ -26,8 +16,6 @@ const patterns: Record<SoundName, Tone[]> = {
     { frequency: 523, delay: 0, duration: 0.09 },
     { frequency: 659, delay: 0.1, duration: 0.12 },
   ],
-  next: [{ frequency: 440, delay: 0, duration: 0.08, volume: 0.055 }],
-  repeat: [{ frequency: 554, delay: 0, duration: 0.13, volume: 0.06 }],
   piece: [
     { frequency: 740, delay: 0, duration: 0.09 },
     { frequency: 740, delay: 0.14, duration: 0.09 },

@@ -4,6 +4,21 @@ export type SpeechItem = {
   pickQuantity: string | number;
 };
 
+export const SPEECH_RATES = [1, 1.12, 1.22, 1.35] as const;
+export const DEFAULT_SPEECH_RATE: SpeechRate = 1.22;
+export const DEFAULT_SPEECH_PITCH = 1.04;
+
+export type SpeechRate = (typeof SPEECH_RATES)[number];
+export type SpeechSettings = {
+  rate: SpeechRate;
+  voiceURI: string;
+};
+export type SpeechVoiceOption = {
+  name: string;
+  lang: string;
+  voiceURI: string;
+};
+
 type UnitForms = [string, string, string];
 
 const units: Record<'PACKAGE' | 'PIECE', UnitForms> = {
@@ -87,11 +102,23 @@ export function buildQuantitySpeech(item: Pick<SpeechItem, 'pickType' | 'pickQua
   return `${spokenNumber} ${unit}`;
 }
 
-export function buildItemSpeech(item: SpeechItem) {
+export function sanitizeProductNameForSpeech(name: string) {
+  return name
+    .replace(/(?<![\p{L}\p{N}])\d+\s*(?:[/\\*xх]\s*\d+){1,2}(?![\p{L}\p{N}])/giu, ' ')
+    .replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu, ' ')
+    .replace(/\(\s*\)|\[\s*\]|\{\s*\}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/^[\s,.;:!?()[\]{}\-–—/\\*]+|[\s,.;:!?()[\]{}\-–—/\\*]+$/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function buildItemSpeech(item: SpeechItem, shortNames = true) {
   const quantity = buildQuantitySpeech(item);
   if (!quantity) return null;
   const prefix = item.pickType === 'PIECE' ? 'Штучный товар. ' : '';
-  return `${prefix}${item.name}. ${quantity}.`;
+  const name = shortNames ? sanitizeProductNameForSpeech(item.name) : item.name;
+  return `${prefix}${name}. ${quantity}.`;
 }
 
 export function buildRemainingSpeech(value: number) {
@@ -109,15 +136,32 @@ export class SpeechSynthesizer {
     if (this.supported) window.speechSynthesis.cancel();
   }
 
-  async speak(text: string) {
+  getRussianVoices(): SpeechVoiceOption[] {
+    if (!this.supported) return [];
+    return window.speechSynthesis
+      .getVoices()
+      .filter((voice) => voice.lang.toLowerCase().startsWith('ru'))
+      .map(({ name, lang, voiceURI }) => ({ name, lang, voiceURI }));
+  }
+
+  onVoicesChanged(listener: () => void) {
+    if (!this.supported) return () => undefined;
+    window.speechSynthesis.addEventListener('voiceschanged', listener);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', listener);
+  }
+
+  async speak(text: string, settings: SpeechSettings = { rate: DEFAULT_SPEECH_RATE, voiceURI: '' }) {
     if (!this.supported) return false;
     this.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = window.speechSynthesis.getVoices();
-    utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) ?? null;
+    utterance.voice =
+      voices.find((voice) => voice.voiceURI === settings.voiceURI) ??
+      voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) ??
+      null;
     utterance.lang = 'ru-RU';
-    utterance.rate = 0.94;
-    utterance.pitch = 1;
+    utterance.rate = settings.rate;
+    utterance.pitch = DEFAULT_SPEECH_PITCH;
 
     return new Promise<boolean>((resolve) => {
       utterance.onend = () => resolve(true);

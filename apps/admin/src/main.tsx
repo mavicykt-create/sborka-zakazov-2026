@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { type SoundName, soundLabels } from './audio/soundPlayer';
 import { useVoicePickerController, type VoiceQueueSnapshot } from './picker/voicePickerController';
+import { SPEECH_RATES, type SpeechRate } from './voice/speechSynthesis';
 import './styles.css';
 
 type ShiftStatus = 'OFF_SHIFT' | 'AVAILABLE' | 'BUSY';
@@ -1165,6 +1166,50 @@ function PickerView() {
             ))}
           </div>
         </details>
+
+        <div className="voiceSettings">
+          <label>
+            <span>Скорость речи</span>
+            <select
+              value={voice.speechRate}
+              onChange={(event) => voice.setSpeechRate(Number(event.target.value) as SpeechRate)}
+            >
+              {SPEECH_RATES.map((rate) => (
+                <option key={rate} value={rate}>
+                  {rate.toFixed(rate === 1 ? 1 : 2)}×
+                </option>
+              ))}
+            </select>
+          </label>
+          {voice.speechVoices.length > 1 && (
+            <label>
+              <span>Русский голос</span>
+              <select
+                value={voice.speechVoice}
+                onChange={(event) => voice.setSpeechVoice(event.target.value)}
+              >
+                <option value="">Автоматически</option>
+                {voice.speechVoices.map((speechVoice) => (
+                  <option key={speechVoice.voiceURI} value={speechVoice.voiceURI}>
+                    {speechVoice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            className={`shortNamesSwitch ${voice.shortNames ? 'isOn' : ''}`}
+            role="switch"
+            aria-checked={voice.shortNames}
+            onClick={() => voice.setShortNames(!voice.shortNames)}
+          >
+            <span className="switchTrack" aria-hidden="true">
+              <i />
+            </span>
+            Короткие названия
+          </button>
+        </div>
       </div>
 
       {!voice.recognitionSupported && (
