@@ -153,7 +153,32 @@ type PublicSettings = {
   terminalUrl: string;
   serverTime: string;
 };
-type Section = 'dashboard' | 'orders' | 'workers' | 'problems' | 'history' | 'analytics' | 'settings';
+type PickerWorker = Pick<Worker, 'id' | 'login' | 'name' | 'isActive' | 'shiftStatus'>;
+type PickerItem = Omit<
+  Item,
+  'assignedWorkerId' | 'assignedWorker' | 'problemResolution' | 'reviewComment' | 'reviewedBy' | 'reviewedAt'
+> & {
+  orderId: string;
+  sortIndex: number;
+  assignedAt: string | null;
+  order: Pick<OrderListItem, 'id' | 'documentNumber' | 'documentDate' | 'status'>;
+};
+type PickerQueue = {
+  worker: PickerWorker;
+  summary: { total: number; active: number; waiting: number };
+  items: PickerItem[];
+  lastCompleted: (PickerItem & { eventType: string; completedAt: string }) | null;
+};
+type PickerLogin = { token: string; expiresAt: string; worker: PickerWorker };
+type Section =
+  | 'dashboard'
+  | 'orders'
+  | 'workers'
+  | 'picker'
+  | 'problems'
+  | 'history'
+  | 'analytics'
+  | 'settings';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
 
@@ -530,6 +555,13 @@ function App() {
               Сборщики
             </button>
             <button
+              className={section === 'picker' ? 'active' : ''}
+              onClick={() => setSection('picker')}
+              type="button"
+            >
+              Сборка
+            </button>
+            <button
               className={section === 'problems' ? 'active' : ''}
               onClick={() => setSection('problems')}
               type="button"
@@ -599,6 +631,8 @@ function App() {
           onShift={setShift}
         />
       )}
+
+      {section === 'picker' && <PickerView />}
 
       {section === 'problems' && (
         <ProblemsView
@@ -781,6 +815,310 @@ function App() {
         </main>
       )}
     </div>
+  );
+}
+
+function PickerView() {
+  const [token, setToken] = useState(() => sessionStorage.getItem('pickerToken') ?? '');
+  const [queue, setQueue] = useState<PickerQueue | null>(null);
+  const [credentials, setCredentials] = useState({ login: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function pickerRequest<T>(path: string, init?: RequestInit) {
+    return requestJson<T>(`${API}${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    });
+  }
+
+  async function refreshQueue() {
+    if (!token) return;
+    const nextQueue = await pickerRequest<PickerQueue>('/api/picker/queue');
+    setQueue(nextQueue);
+  }
+
+  useEffect(() => {
+    if (!token) {
+      setQueue(null);
+      return;
+    }
+    void requestJson<PickerQueue>(`${API}/api/picker/queue`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(setQueue)
+      .catch((error) => {
+        setMessage(error instanceof Error ? error.message : 'Не удалось открыть очередь');
+        if (error instanceof Error && error.message.toLowerCase().includes('сесси')) {
+          sessionStorage.removeItem('pickerToken');
+          setToken('');
+        }
+      });
+  }, [token]);
+
+  async function login(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await requestJson<PickerLogin>(`${API}/api/picker/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+      });
+      sessionStorage.setItem('pickerToken', result.token);
+      setToken(result.token);
+      setCredentials({ login: '', password: '' });
+      setMessage(`Смена открыта: ${result.worker.name}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось войти');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    setBusy(true);
+    try {
+      await pickerRequest('/api/picker/logout', { method: 'POST' });
+    } catch {
+      // Локальный выход должен сработать даже при недоступном сервере.
+    } finally {
+      sessionStorage.removeItem('pickerToken');
+      setToken('');
+      setQueue(null);
+      setMessage('');
+      setBusy(false);
+    }
+  }
+
+  async function setItemStatus(item: PickerItem, status: 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED') {
+    setBusy(true);
+    setMessage('');
+    try {
+      if (item.status === 'ASSIGNED' && status !== 'ACTIVE') {
+        await pickerRequest(`/api/picker/items/${item.id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'ACTIVE', deviceAt: new Date().toISOString() }),
+        });
+      }
+      await pickerRequest(`/api/picker/items/${item.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, deviceAt: new Date().toISOString() }),
+      });
+      await refreshQueue();
+      setMessage(status === 'ACTIVE' ? 'Позиция взята в работу' : 'Результат сохранён');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Действие не выполнено');
+      await refreshQueue().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoLast() {
+    if (!queue?.lastCompleted) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await pickerRequest(`/api/picker/items/${queue.lastCompleted.id}/undo`, {
+        method: 'POST',
+        body: JSON.stringify({ deviceAt: new Date().toISOString() }),
+      });
+      await refreshQueue();
+      setMessage('Последнее действие отменено');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось отменить действие');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!token) {
+    return (
+      <section className="pickerShell pickerLoginShell">
+        <div className="pickerIntro">
+          <p className="eyebrow">Рабочее место</p>
+          <h2>Личная очередь сборщика</h2>
+          <p>Войдите под своей учётной записью. Здесь будут только назначенные вам позиции.</p>
+          <div className="pickerSteps">
+            <span className="pickerStep">01 Войти</span>
+            <span className="pickerStep">02 Собрать</span>
+            <span className="pickerStep">03 Подтвердить</span>
+          </div>
+        </div>
+        <form className="pickerLogin" onSubmit={(event) => void login(event)}>
+          <label>
+            Логин
+            <input
+              autoComplete="username"
+              value={credentials.login}
+              onChange={(event) => setCredentials({ ...credentials, login: event.target.value })}
+              required
+            />
+          </label>
+          <label>
+            Пароль
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={credentials.password}
+              onChange={(event) => setCredentials({ ...credentials, password: event.target.value })}
+              required
+            />
+          </label>
+          <button className="primary" type="submit" disabled={busy}>
+            {busy ? 'Входим…' : 'Открыть смену'}
+          </button>
+          {message && (
+            <p className="pickerMessage" role="alert">
+              {message}
+            </p>
+          )}
+        </form>
+      </section>
+    );
+  }
+
+  if (!queue) return <div className="empty">Загрузка личной очереди…</div>;
+  const current = queue.items.find((item) => item.status === 'ACTIVE') ?? queue.items[0];
+  const upcoming = queue.items.filter((item) => item.id !== current?.id).slice(0, 6);
+
+  return (
+    <section className="pickerShell">
+      <div className="pickerTopbar">
+        <div>
+          <p className="eyebrow">Сборщик</p>
+          <h2>{queue.worker.name}</h2>
+          <span className={`shiftPill ${queue.worker.shiftStatus.toLowerCase()}`}>
+            {shiftLabel(queue.worker.shiftStatus)}
+          </span>
+        </div>
+        <div className="pickerCounter">
+          <strong className="pickerCounterValue">{queue.summary.total}</strong>
+          <span className="pickerCounterLabel">осталось</span>
+        </div>
+        <button type="button" className="ghost" disabled={busy} onClick={() => void logout()}>
+          Выйти
+        </button>
+      </div>
+
+      {message && (
+        <div className="pickerMessage" role="status">
+          {message}
+        </div>
+      )}
+
+      {current ? (
+        <div className="pickerWorkspace">
+          <article className="pickerCurrent">
+            <div className="pickerOrderLine">
+              <span>Заказ №{current.order.documentNumber}</span>
+              <span>{current.groupKey}</span>
+            </div>
+            <p className="pickerPosition">Позиция {current.sortIndex + 1}</p>
+            <h3>{current.name}</h3>
+            <div className="pickerFacts">
+              <div>
+                <span className="pickerFactLabel">Штрихкод</span>
+                <strong className="pickerFactValue">{current.barcode || 'нет'}</strong>
+              </div>
+              <div>
+                <span className="pickerFactLabel">
+                  {current.pickType === 'PACKAGE' ? 'Упаковок' : 'Штук'}
+                </span>
+                <strong className="pickerFactValue">{quantity(current.pickQuantity)}</strong>
+              </div>
+              <div>
+                <span className="pickerFactLabel">Тип</span>
+                <strong className="pickerFactValue">
+                  {current.pickType === 'PACKAGE'
+                    ? 'УПАК'
+                    : current.pickType === 'PIECE'
+                      ? 'ШТ'
+                      : 'ПРОВЕРИТЬ'}
+                </strong>
+              </div>
+            </div>
+            {current.status === 'ASSIGNED' ? (
+              <button
+                className="pickerStart"
+                type="button"
+                disabled={busy}
+                onClick={() => void setItemStatus(current, 'ACTIVE')}
+              >
+                Начать позицию
+              </button>
+            ) : (
+              <div className="pickerActions">
+                <button
+                  className="picked"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void setItemStatus(current, 'PICKED')}
+                >
+                  Взял
+                </button>
+                <button
+                  className="missing"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void setItemStatus(current, 'NOT_FOUND')}
+                >
+                  Не нашёл
+                </button>
+                <button
+                  className="skipped"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void setItemStatus(current, 'SKIPPED')}
+                >
+                  Пропустить
+                </button>
+              </div>
+            )}
+          </article>
+
+          <aside className="pickerQueuePanel">
+            <p className="eyebrow">Дальше</p>
+            <h3>Ближайшие позиции</h3>
+            <div className="pickerQueueList">
+              {upcoming.map((item) => (
+                <div key={item.id}>
+                  <span className="pickerQueueNumber">{item.sortIndex + 1}</span>
+                  <p>
+                    {item.name}
+                    <small className="pickerQueueMeta">
+                      №{item.order.documentNumber} · {item.groupKey}
+                    </small>
+                  </p>
+                  <strong className="pickerQueueQuantity">
+                    {quantity(item.pickQuantity)} {item.pickType === 'PACKAGE' ? 'уп.' : 'шт.'}
+                  </strong>
+                </div>
+              ))}
+              {!upcoming.length && <p className="empty compact">Это последняя позиция в очереди</p>}
+            </div>
+          </aside>
+        </div>
+      ) : (
+        <div className="pickerComplete">
+          <span className="pickerCompleteMark">✓</span>
+          <h2>Очередь собрана</h2>
+          <p>Новых назначенных позиций сейчас нет.</p>
+        </div>
+      )}
+
+      {queue.lastCompleted && (
+        <button type="button" className="pickerUndo" disabled={busy} onClick={() => void undoLast()}>
+          Отменить последнее: {queue.lastCompleted.name}
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -1582,6 +1920,10 @@ function WorkerStatus({ value }: { value: ShiftStatus }) {
     BUSY: 'Занят',
   };
   return <span className={`workerStatus ws-${value}`}>{labels[value]}</span>;
+}
+
+function shiftLabel(value: ShiftStatus) {
+  return { OFF_SHIFT: 'Вне смены', AVAILABLE: 'Доступен', BUSY: 'В работе' }[value];
 }
 
 function ItemStatusBadge({ value }: { value: ItemStatus }) {
