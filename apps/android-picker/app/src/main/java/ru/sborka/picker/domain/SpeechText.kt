@@ -9,14 +9,20 @@ private val feminine = listOf("", "одна", "две", "три", "четыре"
 private val teens = listOf("десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать")
 private val tens = listOf("", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто")
 private val hundreds = listOf("", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот")
+private val packagingSchemeRegex =
+    Regex("(?<![\\p{L}\\p{N}])\\d+\\s*(?:[/\\\\*xх]\\s*\\d+){1,2}(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
+private val asianScriptRegex = Regex("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]+")
+private val emptyBracketsRegex = Regex("\\(\\s*\\)|\\[\\s*\\]|\\{\\s*\\}")
+private val spaceBeforePunctuationRegex = Regex("\\s+([,.;:!?])")
+private val repeatedWhitespaceRegex = Regex("\\s+")
 
 fun sanitizeProductName(name: String): String = name
-    .replace(Regex("(?<![\\p{L}\\p{N}])\\d+\\s*(?:[/\\\\*xх]\\s*\\d+){1,2}(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE), " ")
-    .replace(Regex("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]+"), " ")
-    .replace(Regex("\\(\\s*\\)|\\[\\s*]|\\{\\s*}"), " ")
-    .replace(Regex("\\s+([,.;:!?])"), "$1")
+    .replace(packagingSchemeRegex, " ")
+    .replace(asianScriptRegex, " ")
+    .replace(emptyBracketsRegex, " ")
+    .replace(spaceBeforePunctuationRegex, "$1")
     .trim(' ', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '-', '–', '—', '/', '\\', '*')
-    .replace(Regex("\\s+"), " ")
+    .replace(repeatedWhitespaceRegex, " ")
 
 fun numberToRussian(value: Double, useFeminine: Boolean): String {
     val integer = value.toInt()
@@ -69,10 +75,10 @@ fun quantitySpeech(item: PickerItem): String? {
 fun itemSpeech(item: PickerItem, shortNames: Boolean): String? {
     val quantity = quantitySpeech(item) ?: return null
     val sanitized = sanitizeProductName(item.name)
-    val name = if (shortNames) sanitized.split(Regex("\\s+")).take(8).joinToString(" ") else sanitized
+    val name = if (shortNames) sanitized.split(repeatedWhitespaceRegex).take(8).joinToString(" ") else sanitized
     val prefix = if (item.pickType == PickType.PIECE) "Штучный товар. " else ""
     return "$prefix$name. $quantity."
 }
 
 fun remainingSpeech(value: Int): String =
-    "Осталось ${numberToRussian(value.toDouble(), true)} ${plural(value, "позиция", "позиции", "позиций")}."
+    "Осталось \${numberToRussian(value.toDouble(), true)} \${plural(value, "позиция", "позиции", "позиций")}."
