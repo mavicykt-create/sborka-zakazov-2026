@@ -9,6 +9,13 @@ import { db } from './db.js';
 import { getAnalytics } from './modules/analytics/analyticsService.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
 import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modules/orders/importService.js';
+import {
+  assertPickerCanWork,
+  authenticatePicker,
+  getPickerQueue,
+  loginPicker,
+  logoutPicker,
+} from './modules/picker/pickerService.js';
 import { createOrderReport } from './modules/reports/reportService.js';
 import {
   closeOrder,
@@ -113,6 +120,15 @@ const analyticsQuerySchema = z.object({
     .pipe(z.union([z.literal(7), z.literal(30), z.literal(90)]))
     .default(30),
 });
+const pickerLoginSchema = z.object({
+  login: z.string().trim().min(1).max(40),
+  password: z.string().min(1).max(200),
+});
+const pickerStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'PICKED', 'NOT_FOUND', 'SKIPPED']),
+  deviceAt: z.string().datetime().optional(),
+});
+const pickerUndoSchema = z.object({ deviceAt: z.string().datetime().optional() });
 
 export async function buildApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
@@ -160,6 +176,42 @@ export async function buildApp() {
     return getAnalytics(query.days);
   });
   app.get('/api/settings', getPublicSettings);
+
+  app.post<{ Body: unknown }>('/api/picker/login', async (request) => {
+    const body = pickerLoginSchema.parse(request.body);
+    return loginPicker(body.login, body.password);
+  });
+  app.post('/api/picker/logout', async (request) => logoutPicker(request.headers.authorization));
+  app.get('/api/picker/me', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    return { worker: session.worker, expiresAt: session.expiresAt };
+  });
+  app.get('/api/picker/queue', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    return getPickerQueue(session.worker.id);
+  });
+  app.patch<{ Params: { id: string }; Body: unknown }>('/api/picker/items/:id/status', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    assertPickerCanWork(session.worker);
+    const body = pickerStatusSchema.parse(request.body);
+    return changeItemStatus(
+      request.params.id,
+      body.status,
+      session.worker.id,
+      body.deviceAt ? new Date(body.deviceAt) : undefined,
+    );
+  });
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/picker/items/:id/undo', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    assertPickerCanWork(session.worker);
+    const body = pickerUndoSchema.parse(request.body ?? {});
+    return undoItemStatus(
+      request.params.id,
+      session.worker.id,
+      body.deviceAt ? new Date(body.deviceAt) : undefined,
+    );
+  });
+
   app.get<{ Querystring: unknown }>('/api/imports', async (request) =>
     listImportAttempts(importQuerySchema.parse(request.query)),
   );

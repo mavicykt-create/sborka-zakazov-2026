@@ -148,8 +148,22 @@ model Worker {
   updatedAt    DateTime     @updatedAt
   assignedItems OrderItem[]
   events       OrderEvent[]
+  sessions     WorkerSession[]
 
   @@index([isActive, shiftStatus])
+}
+
+model WorkerSession {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  workerId   String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  worker     Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, expiresAt])
+  @@index([expiresAt])
 }
 
 model OrderEvent {

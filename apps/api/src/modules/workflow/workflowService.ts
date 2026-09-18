@@ -92,7 +92,7 @@ export async function updateWorker(id: string, input: UpdateWorkerInput) {
 
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
   const isActive = input.isActive ?? worker.isActive;
-  return db.worker.update({
+  const updatedWorker = await db.worker.update({
     where: { id },
     data: {
       login: input.login?.trim().toLowerCase(),
@@ -103,6 +103,10 @@ export async function updateWorker(id: string, input: UpdateWorkerInput) {
     },
     select: publicWorkerSelect,
   });
+  if (input.password || input.isActive === false) {
+    await db.workerSession.deleteMany({ where: { workerId: id } });
+  }
+  return updatedWorker;
 }
 
 export async function listOrdersWithProgress() {
