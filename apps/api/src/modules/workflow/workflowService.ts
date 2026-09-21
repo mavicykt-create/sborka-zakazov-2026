@@ -171,7 +171,7 @@ export async function assignOrder(orderId: string, requestedWorkerIds: string[],
         include: { items: { orderBy: { sortIndex: 'asc' } } },
       });
       if (!order) throw new WorkflowError('Заказ не найден', 404);
-      if (order.status === 'COMPLETED' || order.status === 'CLOSED') {
+      if (order.status === 'COMPLETED' || order.status === 'CLOSED' || order.status === 'CANCELLED') {
         throw new WorkflowError('Завершённый заказ нельзя распределить', 409);
       }
 
@@ -270,7 +270,9 @@ export async function changeItemStatus(
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
-    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
+    if (item.order.status === 'CLOSED' || item.order.status === 'CANCELLED') {
+      throw new WorkflowError('Закрытый или отменённый заказ нельзя изменять', 409);
+    }
     if (!item.assignedWorkerId) throw new WorkflowError('Позиция не назначена сборщику', 409);
     if (workerId && workerId !== item.assignedWorkerId) {
       throw new WorkflowError('Позиция назначена другому сборщику', 403);
@@ -358,7 +360,9 @@ export async function undoItemStatus(itemId: string, workerId?: string, deviceAt
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
-    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
+    if (item.order.status === 'CLOSED' || item.order.status === 'CANCELLED') {
+      throw new WorkflowError('Закрытый или отменённый заказ нельзя изменять', 409);
+    }
     if (!item.assignedWorkerId) throw new WorkflowError('Позиция не назначена сборщику', 409);
     if (workerId && workerId !== item.assignedWorkerId) {
       throw new WorkflowError('Позиция назначена другому сборщику', 403);

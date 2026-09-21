@@ -15,6 +15,7 @@ enum OrderStatus {
   REVIEW_REQUIRED
   COMPLETED
   CLOSED
+  CANCELLED
 }
 
 enum PickType {
@@ -44,6 +45,8 @@ enum ShiftStatus {
 }
 
 enum EventType {
+  SOURCE_UPDATED
+  SOURCE_CANCELLED
   ORDER_ASSIGNED
   ORDER_STARTED
   ORDER_COMPLETED
@@ -72,6 +75,11 @@ model Order {
   documentDate   DateTime     @db.Date
   warehouse      String
   sourceHash     String?      @unique
+  sourceSystem   String?
+  sourceId       String?
+  sourceRevision String?
+  sourceCustomer String?
+  sourcePosted   Boolean      @default(true)
   status         OrderStatus  @default(NEW)
   startedAt      DateTime?
   completedAt    DateTime?
@@ -83,6 +91,7 @@ model Order {
   importAttempts ImportAttempt[]
 
   @@unique([documentNumber, documentDate, warehouse])
+  @@unique([sourceSystem, sourceId])
 }
 
 model ImportAttempt {

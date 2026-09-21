@@ -8,7 +8,15 @@ import './styles.css';
 
 type ShiftStatus = 'OFF_SHIFT' | 'AVAILABLE' | 'BUSY';
 type ItemStatus = 'PENDING' | 'ASSIGNED' | 'ACTIVE' | 'PICKED' | 'NOT_FOUND' | 'SKIPPED';
-type OrderStatus = 'NEW' | 'READY' | 'ASSIGNED' | 'PICKING' | 'REVIEW_REQUIRED' | 'COMPLETED' | 'CLOSED';
+type OrderStatus =
+  | 'NEW'
+  | 'READY'
+  | 'ASSIGNED'
+  | 'PICKING'
+  | 'REVIEW_REQUIRED'
+  | 'COMPLETED'
+  | 'CLOSED'
+  | 'CANCELLED';
 type ProblemResolution = 'CONFIRMED' | 'RESOLVED' | null;
 
 type Progress = {
@@ -818,6 +826,14 @@ function App() {
 
                 <ProgressBar progress={selected.progress} />
 
+                {selected.status === 'CANCELLED' && (
+                  <section className="attentionBox">
+                    <p className="eyebrow">Синхронизация с 1С</p>
+                    <strong>Проведение расходной накладной отменено</strong>
+                    <span>Этот заказ нельзя передать сборщикам.</span>
+                  </section>
+                )}
+
                 {['COMPLETED', 'REVIEW_REQUIRED', 'CLOSED'].includes(selected.status) && (
                   <section className="completionBar">
                     <div>
@@ -856,6 +872,7 @@ function App() {
 
                 {selected.status !== 'COMPLETED' &&
                   selected.status !== 'CLOSED' &&
+                  selected.status !== 'CANCELLED' &&
                   selected.progress.completed < selected.progress.total && (
                     <section className="assignmentBox">
                       <div>
@@ -920,7 +937,7 @@ function App() {
                         <ItemRow
                           key={item.id}
                           item={item}
-                          busy={busy || selected.status === 'CLOSED'}
+                          busy={busy || selected.status === 'CLOSED' || selected.status === 'CANCELLED'}
                           onStatus={changeStatus}
                           onUndo={undo}
                           onReview={reviewPickType}
@@ -2199,6 +2216,8 @@ function HistoryView({ orders, onOpen }: { orders: OrderListItem[]; onOpen: (id:
 
 function EventTimeline({ events }: { events: OrderEvent[] }) {
   const labels: Record<string, string> = {
+    SOURCE_UPDATED: 'Накладная обновлена из 1С',
+    SOURCE_CANCELLED: 'Проведение накладной отменено в 1С',
     ORDER_ASSIGNED: 'Заказ распределён',
     ORDER_STARTED: 'Сборка начата',
     ORDER_COMPLETED: 'Сборка завершена',
@@ -2373,6 +2392,7 @@ function Status({ value }: { value: OrderStatus }) {
     REVIEW_REQUIRED: 'Требует проверки',
     COMPLETED: 'Готов',
     CLOSED: 'Закрыт',
+    CANCELLED: 'Отменён в 1С',
   };
   return <span className={`status s-${value}`}>{labels[value]}</span>;
 }

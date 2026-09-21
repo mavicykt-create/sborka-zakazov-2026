@@ -18,6 +18,12 @@ import {
   type AdminSession,
 } from './modules/auth/adminAuth.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
+import {
+  authenticateOneC,
+  importExpenseInvoiceFromOneC,
+  OneCAuthError,
+  oneCExpenseInvoiceSchema,
+} from './modules/integrations/oneCExchangeService.js';
 import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modules/orders/importService.js';
 import {
   assertPickerCanWork,
@@ -102,6 +108,8 @@ const historyQuerySchema = z.object({
   to: z.string().date().optional(),
 });
 const eventTypeSchema = z.enum([
+  'SOURCE_UPDATED',
+  'SOURCE_CANCELLED',
   'ORDER_ASSIGNED',
   'ORDER_STARTED',
   'ORDER_COMPLETED',
@@ -229,6 +237,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
       if (error.retryAfterSeconds) reply.header('Retry-After', error.retryAfterSeconds);
       return reply.code(error.statusCode).send({ error: error.message });
     }
+    if (error instanceof OneCAuthError) {
+      return reply.code(error.statusCode).send({ error: error.message });
+    }
     if (error instanceof WorkflowError) return reply.code(error.statusCode).send({ error: error.message });
     if (error instanceof SpeechTextValidationError || error instanceof SpeechProviderError) {
       return reply.code(error.statusCode).send({ error: error.message });
@@ -268,6 +279,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
         sameSite: adminCookieOptions.sameSite,
       })
       .send({ ok: true });
+  });
+
+  app.post<{ Body: unknown }>('/api/integrations/1c/expense-invoices', async (request, reply) => {
+    authenticateOneC(request.headers.authorization, process.env.ONEC_EXCHANGE_TOKEN);
+    const result = await importExpenseInvoiceFromOneC(oneCExpenseInvoiceSchema.parse(request.body));
+    return reply.code(result.order && !result.duplicate && !result.updated ? 201 : 200).send(result);
   });
 
   app.get('/api/admin/me', async (request) =>

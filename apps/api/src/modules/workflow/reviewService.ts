@@ -50,7 +50,9 @@ export async function reviewItem(itemId: string, input: ReviewItemInput) {
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
-    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
+    if (item.order.status === 'CLOSED' || item.order.status === 'CANCELLED') {
+      throw new WorkflowError('Закрытый или отменённый заказ нельзя изменять', 409);
+    }
     if (item.pickType !== 'REVIEW') throw new WorkflowError('Тип отбора этой позиции уже определён', 409);
     if (input.pickQuantity <= 0) throw new WorkflowError('Количество отбора должно быть больше нуля');
 
@@ -90,7 +92,9 @@ export async function resolveProblem(itemId: string, input: ResolveProblemInput)
   return db.$transaction(async (tx) => {
     const item = await tx.orderItem.findUnique({ where: { id: itemId }, include: { order: true } });
     if (!item) throw new WorkflowError('Позиция не найдена', 404);
-    if (item.order.status === 'CLOSED') throw new WorkflowError('Закрытый заказ нельзя изменять', 409);
+    if (item.order.status === 'CLOSED' || item.order.status === 'CANCELLED') {
+      throw new WorkflowError('Закрытый или отменённый заказ нельзя изменять', 409);
+    }
     if (!['NOT_FOUND', 'SKIPPED'].includes(item.status)) {
       throw new WorkflowError('У позиции нет проблемы, которую можно подтвердить или вернуть в работу', 409);
     }
@@ -232,7 +236,7 @@ export async function listProblems(filters: ProblemFilters = {}) {
   return db.orderItem.findMany({
     where: {
       orderId: filters.orderId,
-      order: { status: { not: 'CLOSED' } },
+      order: { status: { notIn: ['CLOSED', 'CANCELLED'] } },
       AND: [typeWhere, resolutionWhere],
     },
     orderBy: [{ order: { createdAt: 'desc' } }, { sortIndex: 'asc' }],

@@ -59,6 +59,7 @@ describe('production configuration', () => {
         ADMIN_USERNAME: 'admin',
         ADMIN_PASSWORD: 'production-admin-password',
         ADMIN_SESSION_SECRET: 'production-admin-session-secret',
+        ONEC_EXCHANGE_TOKEN: 'production-onec-exchange-token-1234567890',
       }),
     ).not.toThrow();
   });

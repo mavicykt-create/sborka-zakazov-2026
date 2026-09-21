@@ -28,7 +28,7 @@ export async function getDashboard() {
     db.importAttempt.count({ where: { status: 'FAILED', createdAt: { gte: since } } }),
     db.worker.groupBy({ by: ['shiftStatus'], _count: { _all: true }, where: { isActive: true } }),
     db.order.findMany({
-      where: { status: { not: 'CLOSED' } },
+      where: { status: { notIn: ['CLOSED', 'CANCELLED'] } },
       take: 6,
       orderBy: { createdAt: 'desc' },
       include: { items: { select: { status: true } } },

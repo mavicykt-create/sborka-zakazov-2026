@@ -74,6 +74,38 @@ curl -F "file=@test-data/sample-order-12293.xlsx" http://localhost:8080/api/orde
 
 После импорта заказ доступен через `GET /api/orders` и `GET /api/orders/:id`. Повторный запрос вернёт существующий заказ с `"duplicate": true` и не создаст копию.
 
+## Обмен с 1С:УНФ
+
+`POST /api/integrations/1c/expense-invoices` принимает расходные накладные из локальной 1С:УНФ в JSON. Запрос должен содержать заголовок `Authorization: Bearer <ONEC_EXCHANGE_TOKEN>`. Ключ задаётся отдельно в окружении сервера, должен состоять минимум из 32 символов и не хранится в репозитории.
+
+Пример тела запроса:
+
+```json
+{
+  "sourceId": "16e9a5f4-7e0e-4d65-91ee-64f3a7b64c38",
+  "revision": "2026-09-22T11:45:00",
+  "posted": true,
+  "documentNumber": "РН-000123",
+  "documentDate": "2026-09-22",
+  "warehouse": "Основной склад",
+  "customer": "Покупатель",
+  "items": [
+    {
+      "lineNumber": 1,
+      "productId": "a9bbf73c-2d1e-4727-8704-534cc70a989e",
+      "sku": "10101",
+      "barcode": "4600000000001",
+      "name": "Товар",
+      "quantity": 2,
+      "unit": "шт",
+      "pickType": "PIECE"
+    }
+  ]
+}
+```
+
+Повтор того же состояния безопасен и возвращает `duplicate: true`. Пока заказ не передан сборщикам, изменение документа заменяет его состав. После начала сборки изменение из 1С получает HTTP 409 и требует проверки администратора. `posted: false` отменяет ещё не начатый заказ и сохраняет это в журнале.
+
 Каждая попытка сохраняется в журнале. Последние загрузки доступны в разделе «Настройки» и через `GET /api/imports`; ошибки за последние 24 часа выводятся на главной странице.
 
 Маршруты главного терминала:
@@ -204,7 +236,8 @@ CORS и отдельного frontend-проекта.
    ```
 
 5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`, `ADMIN_USERNAME=admin`,
-   `YANDEX_SPEECHKIT_VOICE=alena`, `ADMIN_PUBLIC_URL=https://<production-domain>` и
+   `YANDEX_SPEECHKIT_VOICE=alena`, `ONEC_EXCHANGE_TOKEN=<случайная строка от 32 символов>`,
+   `ADMIN_PUBLIC_URL=https://<production-domain>` и
    `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
    дублируйте в обычных variables.
 6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и

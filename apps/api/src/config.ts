@@ -21,6 +21,10 @@ export function validateProductionEnvironment(env: RuntimeEnvironment = process.
     errors.push('ADMIN_SESSION_SECRET is required');
   }
 
+  if (!env.ONEC_EXCHANGE_TOKEN || env.ONEC_EXCHANGE_TOKEN.length < 32) {
+    errors.push('ONEC_EXCHANGE_TOKEN must be at least 32 characters');
+  }
+
   if (errors.length > 0) {
     throw new Error(`Invalid production environment: ${errors.join('; ')}`);
   }

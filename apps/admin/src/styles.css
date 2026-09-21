@@ -335,6 +335,7 @@ main {
   background: #ffedc9;
 }
 .s-REVIEW_REQUIRED,
+.s-CANCELLED,
 .is-NOT_FOUND,
 .is-SKIPPED {
   color: #7b322a;
