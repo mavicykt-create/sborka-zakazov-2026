@@ -18,6 +18,8 @@ import {
   type AdminSession,
 } from './modules/auth/adminAuth.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
+import { importManualEmailAttachment, listEmailOrderImports } from './modules/email/emailOrderService.js';
+import { getGmailConfiguration, getGmailStatus, syncGmailOrders } from './modules/email/gmailOrderService.js';
 import {
   authenticateOneC,
   importExpenseInvoiceFromOneC,
@@ -137,6 +139,13 @@ const importQuerySchema = z.object({
   status: z.enum(['SUCCESS', 'DUPLICATE', 'FAILED']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
+const emailImportQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const manualEmailImportQuerySchema = z.object({
+  sender: z.string().trim().max(320).optional(),
+  subject: z.string().trim().max(500).optional(),
+});
 const analyticsQuerySchema = z.object({
   days: z.coerce
     .number()
@@ -187,6 +196,7 @@ const adminApiPaths = [
   '/api/dashboard',
   '/api/analytics',
   '/api/imports',
+  '/api/email-orders',
   '/api/problems',
   '/api/settings',
 ];
@@ -213,6 +223,29 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(cors, { origin: corsOrigin, credentials: true });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
+
+  let gmailPollTimer: NodeJS.Timeout | undefined;
+  let gmailSync: Promise<unknown> | undefined;
+  const runGmailSync = () => {
+    if (gmailSync) return gmailSync;
+    gmailSync = syncGmailOrders()
+      .catch((error) => app.log.error(error, 'Gmail order sync failed'))
+      .finally(() => {
+        gmailSync = undefined;
+      });
+    return gmailSync;
+  };
+
+  app.addHook('onReady', async () => {
+    const status = getGmailStatus();
+    if (!status.automatic) return;
+    void runGmailSync();
+    gmailPollTimer = setInterval(() => void runGmailSync(), status.intervalSeconds * 1000);
+    gmailPollTimer.unref();
+  });
+  app.addHook('onClose', async () => {
+    if (gmailPollTimer) clearInterval(gmailPollTimer);
+  });
 
   const adminCookieOptions = {
     path: '/',
@@ -301,6 +334,28 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
     const result = await importOrderXlsx(file.filename, await file.toBuffer());
     return reply.code(result.duplicate ? 200 : 201).send(result);
+  });
+
+  app.get<{ Querystring: unknown }>('/api/email-orders', async (request) => {
+    const query = emailImportQuerySchema.parse(request.query);
+    return listEmailOrderImports(query.limit);
+  });
+  app.get('/api/email-orders/status', async () => getGmailStatus());
+  app.post('/api/email-orders/sync', async () => {
+    const config = getGmailConfiguration();
+    return syncGmailOrders(config);
+  });
+  app.post<{ Querystring: unknown }>('/api/email-orders/import-xlsx', async (request, reply) => {
+    const metadata = manualEmailImportQuerySchema.parse(request.query);
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: 'Файл не передан' });
+    const result = await importManualEmailAttachment({
+      sender: metadata.sender,
+      subject: metadata.subject,
+      filename: file.filename,
+      buffer: await file.toBuffer(),
+    });
+    return reply.code(result.duplicate || result.alreadyProcessed ? 200 : 201).send(result);
   });
 
   app.get('/api/dashboard', getDashboard);

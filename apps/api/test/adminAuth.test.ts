@@ -48,6 +48,7 @@ describe('admin authentication', () => {
     '/api/dashboard',
     '/api/analytics',
     '/api/imports',
+    '/api/email-orders',
     '/api/problems',
     '/api/settings',
   ])('rejects an unauthenticated request to %s', async (url) => {

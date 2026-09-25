@@ -74,6 +74,17 @@ curl -F "file=@test-data/sample-order-12293.xlsx" http://localhost:8080/api/orde
 
 После импорта заказ доступен через `GET /api/orders` и `GET /api/orders/:id`. Повторный запрос вернёт существующий заказ с `"duplicate": true` и не создаст копию.
 
+## Сборка по email
+
+Вкладка «Сборка по email» показывает состояние подключения Gmail, позволяет вручную проверить
+XLSX-вложение и ведёт журнал писем со ссылками на созданные заказы. Автоматический обмен использует
+OAuth: задайте `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` и `GMAIL_REFRESH_TOKEN`. Пароль от почты сервис
+не хранит. По умолчанию раз в минуту выбираются непрочитанные письма с XLSX-вложением; фильтр и
+период меняются через `GMAIL_QUERY` и `GMAIL_POLL_INTERVAL_MS`.
+
+Повторное письмо или одинаковое вложение не создаёт второй заказ. Ручная проверка доступна и до
+подключения Gmail.
+
 ## Обмен с 1С:УНФ
 
 `POST /api/integrations/1c/expense-invoices` принимает расходные накладные из локальной 1С:УНФ в JSON. Запрос должен содержать заголовок `Authorization: Bearer <ONEC_EXCHANGE_TOKEN>`. Ключ задаётся отдельно в окружении сервера, должен состоять минимум из 32 символов и не хранится в репозитории.
@@ -237,7 +248,8 @@ CORS и отдельного frontend-проекта.
 
 5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`, `ADMIN_USERNAME=admin`,
    `YANDEX_SPEECHKIT_VOICE=alena`, `ONEC_EXCHANGE_TOKEN=<случайная строка от 32 символов>`,
-   `ADMIN_PUBLIC_URL=https://<production-domain>` и
+   при автоматическом импорте писем — OAuth-параметры `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`,
+   `GMAIL_REFRESH_TOKEN` и `GMAIL_USER`, `ADMIN_PUBLIC_URL=https://<production-domain>` и
    `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
    дублируйте в обычных variables.
 6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и
@@ -298,5 +310,4 @@ npm --workspace @assembly/api test -- --run test/workflow.integration.test.ts
 ## Следующие фазы
 
 - Android-приложение;
-- Gmail-импорт;
 - интеграция 1С.

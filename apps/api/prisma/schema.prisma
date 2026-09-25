@@ -69,6 +69,13 @@ enum ImportStatus {
   FAILED
 }
 
+enum EmailOrderStatus {
+  RECEIVED
+  IMPORTED
+  DUPLICATE
+  FAILED
+}
+
 model Order {
   id             String       @id @default(cuid())
   documentNumber String
@@ -89,9 +96,33 @@ model Order {
   items          OrderItem[]
   events         OrderEvent[]
   importAttempts ImportAttempt[]
+  emailImports   EmailOrderImport[]
 
   @@unique([documentNumber, documentDate, warehouse])
   @@unique([sourceSystem, sourceId])
+}
+
+model EmailOrderImport {
+  id             String           @id @default(cuid())
+  sourceKey      String           @unique
+  provider       String           @default("MANUAL")
+  messageId      String
+  sender         String
+  subject        String
+  receivedAt     DateTime
+  attachmentId   String?
+  attachmentName String
+  attachmentHash String?
+  status         EmailOrderStatus @default(RECEIVED)
+  orderId        String?
+  errorMessage   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  order          Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([status, receivedAt])
+  @@index([messageId])
+  @@index([orderId])
 }
 
 model ImportAttempt {

@@ -96,6 +96,35 @@ type ImportAttempt = {
   errorMessage: string | null;
   createdAt: string;
 };
+type EmailOrderStatus = 'RECEIVED' | 'IMPORTED' | 'DUPLICATE' | 'FAILED';
+type EmailOrderImport = {
+  id: string;
+  provider: string;
+  messageId: string;
+  sender: string;
+  subject: string;
+  receivedAt: string;
+  attachmentName: string;
+  status: EmailOrderStatus;
+  orderId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  order: {
+    documentNumber: string;
+    warehouse: string;
+    status: OrderStatus;
+    _count: { items: number };
+  } | null;
+};
+type EmailConnectionStatus = {
+  provider: 'GMAIL';
+  configured: boolean;
+  automatic: boolean;
+  mailbox: string;
+  query: string;
+  intervalSeconds: number;
+  missingSettings: string[];
+};
 type Dashboard = {
   generatedAt: string;
   orders: { new: number; inProgress: number; ready: number };
@@ -187,6 +216,7 @@ type AdminSessionResponse = { admin: { username: string }; expiresAt: string };
 type Section =
   | 'dashboard'
   | 'orders'
+  | 'email'
   | 'workers'
   | 'picker'
   | 'problems'
@@ -231,6 +261,8 @@ function App() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [analyticsDays, setAnalyticsDays] = useState<AnalyticsDays>(30);
   const [imports, setImports] = useState<ImportAttempt[]>([]);
+  const [emailImports, setEmailImports] = useState<EmailOrderImport[]>([]);
+  const [emailStatus, setEmailStatus] = useState<EmailConnectionStatus | null>(null);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [events, setEvents] = useState<OrderEvent[]>([]);
   const [selected, setSelected] = useState<Order | null>(null);
@@ -266,6 +298,8 @@ function App() {
       nextAnalytics,
       nextImports,
       nextSettings,
+      nextEmailImports,
+      nextEmailStatus,
     ] = await Promise.all([
       requestJson<OrderListItem[]>(`${API}/api/orders`),
       requestJson<Worker[]>(`${API}/api/workers`),
@@ -275,6 +309,8 @@ function App() {
       requestJson<Analytics>(`${API}/api/analytics?days=${analyticsDays}`),
       requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
       requestJson<PublicSettings>(`${API}/api/settings`),
+      requestJson<EmailOrderImport[]>(`${API}/api/email-orders?limit=50`),
+      requestJson<EmailConnectionStatus>(`${API}/api/email-orders/status`),
     ]);
     setOrders(nextOrders);
     setWorkers(nextWorkers);
@@ -284,6 +320,8 @@ function App() {
     setAnalytics(nextAnalytics);
     setImports(nextImports);
     setSettings(nextSettings);
+    setEmailImports(nextEmailImports);
+    setEmailStatus(nextEmailStatus);
     return { nextOrders, nextWorkers, nextProblems, nextHistory, nextDashboard };
   }
 
@@ -298,6 +336,8 @@ function App() {
       requestJson<Analytics>(`${API}/api/analytics?days=30`),
       requestJson<ImportAttempt[]>(`${API}/api/imports?limit=30`),
       requestJson<PublicSettings>(`${API}/api/settings`),
+      requestJson<EmailOrderImport[]>(`${API}/api/email-orders?limit=50`),
+      requestJson<EmailConnectionStatus>(`${API}/api/email-orders/status`),
     ])
       .then(
         ([
@@ -309,6 +349,8 @@ function App() {
           nextAnalytics,
           nextImports,
           nextSettings,
+          nextEmailImports,
+          nextEmailStatus,
         ]) => {
           setOrders(nextOrders);
           setWorkers(nextWorkers);
@@ -318,6 +360,8 @@ function App() {
           setAnalytics(nextAnalytics);
           setImports(nextImports);
           setSettings(nextSettings);
+          setEmailImports(nextEmailImports);
+          setEmailStatus(nextEmailStatus);
           const orderId = new URLSearchParams(window.location.search).get('order');
           if (!orderId) return undefined;
           return Promise.all([
@@ -409,6 +453,42 @@ function App() {
         result.duplicate
           ? `Заказ №${result.order.documentNumber} уже существует и открыт.`
           : `Заказ №${result.order.documentNumber} импортирован: ${result.order.items.length} позиций.`,
+      );
+    });
+  }
+
+  async function uploadEmailOrder(file: File, sender: string, subject: string) {
+    await perform(async () => {
+      const body = new FormData();
+      body.append('file', file);
+      const params = new URLSearchParams();
+      if (sender.trim()) params.set('sender', sender.trim());
+      if (subject.trim()) params.set('subject', subject.trim());
+      const result = await requestJson<ImportResponse>(
+        `${API}/api/email-orders/import-xlsx?${params.toString()}`,
+        { method: 'POST', body },
+      );
+      await refreshLists();
+      setNotice(
+        result.duplicate
+          ? `Вложение обработано: заказ №${result.order.documentNumber} уже был в системе.`
+          : `Письмо обработано: создан заказ №${result.order.documentNumber}.`,
+      );
+    });
+  }
+
+  async function syncEmailOrders() {
+    await perform(async () => {
+      const result = await requestJson<{
+        messages: number;
+        attachments: number;
+        imported: number;
+        duplicates: number;
+        failed: number;
+      }>(`${API}/api/email-orders/sync`, { method: 'POST' });
+      await refreshLists();
+      setNotice(
+        `Почта проверена: писем ${result.messages}, новых заказов ${result.imported}, дублей ${result.duplicates}, ошибок ${result.failed}.`,
       );
     });
   }
@@ -663,6 +743,13 @@ function App() {
               Заказы
             </button>
             <button
+              className={section === 'email' ? 'active' : ''}
+              onClick={() => setSection('email')}
+              type="button"
+            >
+              Сборка по email
+            </button>
+            <button
               className={section === 'workers' ? 'active' : ''}
               onClick={() => setSection('workers')}
               type="button"
@@ -741,6 +828,17 @@ function App() {
       )}
 
       {section === 'dashboard' && !dashboard && <div className="empty">Загрузка сводки терминала…</div>}
+
+      {section === 'email' && (
+        <EmailAssemblyView
+          imports={emailImports}
+          connection={emailStatus}
+          busy={busy}
+          onUpload={uploadEmailOrder}
+          onSync={syncEmailOrders}
+          onOpen={openOrder}
+        />
+      )}
 
       {section === 'workers' && (
         <WorkersView
@@ -1900,6 +1998,197 @@ function formatDuration(minutes: number | null) {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+}
+
+function EmailAssemblyView({
+  imports,
+  connection,
+  busy,
+  onUpload,
+  onSync,
+  onOpen,
+}: {
+  imports: EmailOrderImport[];
+  connection: EmailConnectionStatus | null;
+  busy: boolean;
+  onUpload: (file: File, sender: string, subject: string) => Promise<void>;
+  onSync: () => Promise<void>;
+  onOpen: (id: string) => Promise<void>;
+}) {
+  const [sender, setSender] = useState('');
+  const [subject, setSubject] = useState('');
+  const importedCount = imports.filter((item) => item.status === 'IMPORTED').length;
+  const failedCount = imports.filter((item) => item.status === 'FAILED').length;
+
+  return (
+    <section className="emailWorkspace">
+      <div className="emailHero">
+        <div>
+          <p className="eyebrow">Новый канал заказов</p>
+          <h2>Сборка по email</h2>
+          <p>
+            XLSX-вложения из писем превращаются в обычные заказы и сразу попадают в очередь сборки. Повторные
+            письма и одинаковые файлы не создают второй заказ.
+          </p>
+        </div>
+        <div className="emailStats">
+          <div>
+            <strong>{imports.length}</strong>
+            <span>писем в журнале</span>
+          </div>
+          <div>
+            <strong>{importedCount}</strong>
+            <span>новых заказов</span>
+          </div>
+          <div className={failedCount ? 'hasErrors' : ''}>
+            <strong>{failedCount}</strong>
+            <span>ошибок</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="emailColumns">
+        <div className="panel emailConnectionPanel">
+          <div className="panelTitle">
+            <div>
+              <p className="eyebrow">Автоматический обмен</p>
+              <h2>Почтовый ящик</h2>
+            </div>
+            <span
+              className={`connectionDot ${connection?.configured ? 'connected' : 'pending'}`}
+              title={connection?.configured ? 'Настроено' : 'Ожидает подключения'}
+            />
+          </div>
+          {connection ? (
+            <>
+              <div className="connectionState">
+                <strong>{connection.configured ? 'Gmail настроен' : 'Gmail ещё не подключён'}</strong>
+                <span>
+                  {connection.automatic
+                    ? `Новые письма проверяются каждые ${connection.intervalSeconds} сек.`
+                    : 'После подключения письма будут проверяться автоматически.'}
+                </span>
+              </div>
+              <dl className="emailConnectionFacts">
+                <div>
+                  <dt>Ящик</dt>
+                  <dd>{connection.configured ? connection.mailbox : 'Не указан'}</dd>
+                </div>
+                <div>
+                  <dt>Что ищем</dt>
+                  <dd>Непрочитанные письма с XLSX</dd>
+                </div>
+              </dl>
+              <button
+                className="primary emailSyncButton"
+                type="button"
+                disabled={busy || !connection.configured}
+                onClick={() => void onSync()}
+              >
+                {busy ? 'Проверяем…' : 'Проверить почту сейчас'}
+              </button>
+              {!connection.configured && (
+                <p className="emailConnectionHint">
+                  Для включения нужны безопасные OAuth-параметры Gmail. Пароль от почты сервис не хранит.
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="empty compact">Проверяем настройку почты…</div>
+          )}
+        </div>
+
+        <div className="panel emailTestPanel">
+          <p className="eyebrow">Проверка до подключения</p>
+          <h2>Загрузить письмо вручную</h2>
+          <p>Можно уже сейчас проверить весь путь заказа: укажите данные письма и выберите вложение XLSX.</p>
+          <label>
+            Отправитель
+            <input
+              type="email"
+              placeholder="client@example.ru"
+              value={sender}
+              onChange={(event) => setSender(event.target.value)}
+            />
+          </label>
+          <label>
+            Тема письма
+            <input
+              type="text"
+              maxLength={500}
+              placeholder="Заказ на сборку"
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+            />
+          </label>
+          <label className={`upload emailUpload ${busy ? 'disabled' : ''}`}>
+            {busy ? 'Обрабатываем…' : 'Выбрать вложение XLSX'}
+            <input
+              type="file"
+              accept=".xlsx"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void onUpload(file, sender, subject);
+                event.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="panel emailJournalPanel">
+        <div className="panelTitle">
+          <div>
+            <p className="eyebrow">Контроль обработки</p>
+            <h2>Журнал писем</h2>
+          </div>
+          <span>{imports.length}</span>
+        </div>
+        <div className="emailJournal">
+          {imports.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              disabled={!item.orderId}
+              onClick={() => item.orderId && void onOpen(item.orderId)}
+            >
+              <EmailStatusBadge value={item.status} />
+              <span className="emailMessage">
+                <strong>{item.subject}</strong>
+                <small>{item.sender}</small>
+              </span>
+              <span className="emailAttachment">
+                <strong>{item.attachmentName}</strong>
+                <small>
+                  {item.errorMessage ??
+                    (item.order
+                      ? `Заказ №${item.order.documentNumber} · ${item.order._count.items} позиций`
+                      : 'Ожидает обработки')}
+                </small>
+              </span>
+              <time>{new Date(item.receivedAt).toLocaleString('ru-RU')}</time>
+            </button>
+          ))}
+          {!imports.length && (
+            <div className="empty compact">
+              Писем пока нет. Загрузите тестовое вложение или подключите Gmail.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EmailStatusBadge({ value }: { value: EmailOrderStatus }) {
+  const labels: Record<EmailOrderStatus, string> = {
+    RECEIVED: 'Получено',
+    IMPORTED: 'Создан заказ',
+    DUPLICATE: 'Дубль',
+    FAILED: 'Ошибка',
+  };
+  return <span className={`emailStatus email-${value}`}>{labels[value]}</span>;
 }
 
 function SettingsView({
