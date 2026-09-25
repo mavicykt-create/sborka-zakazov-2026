@@ -30,6 +30,8 @@ import { importOrderXlsx, listImportAttempts, recordImportFailure } from './modu
 import {
   assertPickerCanWork,
   authenticatePicker,
+  claimAssemblyOrder,
+  getAssemblyBoard,
   getPickerQueue,
   loginPicker,
   logoutPicker,
@@ -377,6 +379,20 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get('/api/picker/queue', async (request) => {
     const session = await authenticatePicker(request.headers.authorization);
     return getPickerQueue(session.worker.id);
+  });
+  app.get('/api/picker/assembly-board', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    return getAssemblyBoard(session.worker.id);
+  });
+  app.post<{ Params: { id: string } }>('/api/picker/orders/:id/claim', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    assertPickerCanWork(session.worker);
+    return claimAssemblyOrder(request.params.id, session.worker.id);
+  });
+  app.post<{ Params: { id: string } }>('/api/picker/orders/:id/finish', async (request) => {
+    const session = await authenticatePicker(request.headers.authorization);
+    assertPickerCanWork(session.worker);
+    return closeOrder(request.params.id, session.worker.name, 'Собрано на планшете');
   });
   app.get('/api/picker/speech/settings', async (request) => {
     await authenticatePickerRequest(request.headers.authorization);

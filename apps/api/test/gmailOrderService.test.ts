@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getGmailConfiguration, getGmailStatus } from '../src/modules/email/gmailOrderService.js';
+import {
+  getGmailConfiguration,
+  getGmailStatus,
+  parseEmailOrderMetadata,
+} from '../src/modules/email/gmailOrderService.js';
 
 describe('Gmail order configuration', () => {
   it('reports missing OAuth settings without exposing their values', () => {
@@ -9,7 +13,7 @@ describe('Gmail order configuration', () => {
       configured: false,
       automatic: false,
       mailbox: 'orders@example.ru',
-      intervalSeconds: 60,
+      intervalSeconds: 5,
     });
     expect(status.missingSettings).toEqual(['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN']);
     expect(JSON.stringify(status)).not.toContain('secret-value');
@@ -42,5 +46,19 @@ describe('Gmail order configuration', () => {
 
   it('refuses to start a sync until OAuth is configured', () => {
     expect(() => getGmailConfiguration({})).toThrow('Gmail ещё не подключён');
+  });
+
+  it('extracts the order number and Russian money amount from the email', () => {
+    expect(parseEmailOrderMetadata('ЗАКАЗ №13183', '№13183 Сумма 5 342,16')).toEqual({
+      orderNumber: '13183',
+      orderTotal: 5342.16,
+    });
+  });
+
+  it('falls back to the attachment number', () => {
+    expect(parseEmailOrderMetadata('Документы', '', 'Товарный чек № НФ-13183 от 25.09.2026.xlsx')).toEqual({
+      orderNumber: '13183',
+      orderTotal: null,
+    });
   });
 });

@@ -5,12 +5,14 @@ type Environment = NodeJS.ProcessEnv;
 
 type GmailPart = {
   filename?: string;
+  mimeType?: string;
   body?: { attachmentId?: string; data?: string };
   parts?: GmailPart[];
 };
 
 type GmailMessage = {
   id: string;
+  snippet?: string;
   payload?: GmailPart & { headers?: Array<{ name: string; value: string }> };
   internalDate?: string;
 };
@@ -64,8 +66,8 @@ export function getGmailConfiguration(environment: Environment = process.env): G
 }
 
 function parseInterval(raw?: string) {
-  const value = Number(raw ?? 60_000);
-  return Number.isFinite(value) && value >= 15_000 ? Math.round(value) : 60_000;
+  const value = Number(raw ?? 5_000);
+  return Number.isFinite(value) && value >= 5_000 ? Math.round(value) : 5_000;
 }
 
 function decodeBase64Url(value: string) {
@@ -80,6 +82,37 @@ function findXlsxParts(part?: GmailPart): GmailPart[] {
   if (!part) return [];
   const current = part.filename?.toLowerCase().endsWith('.xlsx') ? [part] : [];
   return [...current, ...(part.parts?.flatMap(findXlsxParts) ?? [])];
+}
+
+function messageText(part?: GmailPart): string {
+  if (!part) return '';
+  const own =
+    part.body?.data && (!part.mimeType || part.mimeType === 'text/plain' || part.mimeType === 'text/html')
+      ? decodeBase64Url(part.body.data).toString('utf8')
+      : '';
+  return [own, ...(part.parts?.map(messageText) ?? [])]
+    .join(' ')
+    .replace(/<[^>]+>/gu, ' ')
+    .replace(/&nbsp;/giu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function money(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Number(value.replace(/[\s\u00a0]/gu, '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function parseEmailOrderMetadata(subject: string, text: string, filename = '') {
+  const source = `${subject} ${text} ${filename}`;
+  const number =
+    source.match(/заказ\s*№\s*(?:НФ-)?(\d+)/iu)?.[1] ??
+    source.match(/№\s*(?:НФ-)?(\d+)/iu)?.[1] ??
+    filename.match(/НФ-(\d+)/iu)?.[1] ??
+    null;
+  const amount = money(source.match(/сумма\s*[:—-]?\s*([\d\s\u00a0]+(?:[,.]\d{1,2})?)/iu)?.[1]);
+  return { orderNumber: number, orderTotal: amount };
 }
 
 async function gmailJson<T>(fetchImpl: typeof fetch, url: string, init: RequestInit, description: string) {
@@ -129,6 +162,7 @@ export async function syncGmailOrders(
     messages: list.messages?.length ?? 0,
     attachments: 0,
     imported: 0,
+    updated: 0,
     duplicates: 0,
     failed: 0,
   };
@@ -140,6 +174,12 @@ export async function syncGmailOrders(
       'Не удалось прочитать письмо',
     );
     const parts = findXlsxParts(message.payload);
+    const subject = header(message, 'Subject') || 'Без темы';
+    const metadata = parseEmailOrderMetadata(
+      subject,
+      `${message.snippet || ''} ${messageText(message.payload)}`,
+      parts[0]?.filename,
+    );
     for (const part of parts) {
       summary.attachments += 1;
       try {
@@ -162,13 +202,16 @@ export async function syncGmailOrders(
           provider: 'GMAIL',
           messageId: item.id,
           sender: header(message, 'From') || 'Неизвестный отправитель',
-          subject: header(message, 'Subject') || 'Без темы',
+          subject,
           receivedAt: message.internalDate ? new Date(Number(message.internalDate)) : new Date(),
           attachmentId: part.body?.attachmentId,
           attachmentName: part.filename || 'attachment.xlsx',
           buffer,
+          orderNumber: metadata.orderNumber,
+          orderTotal: metadata.orderTotal,
         });
         if (result.duplicate || result.alreadyProcessed) summary.duplicates += 1;
+        else if (result.updated) summary.updated += 1;
         else summary.imported += 1;
       } catch {
         summary.failed += 1;

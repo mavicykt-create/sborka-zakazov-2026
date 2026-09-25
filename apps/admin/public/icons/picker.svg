@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Сборка заказов</title>
+  <rect width="512" height="512" rx="112" fill="#173f34"/>
+  <path d="M120 142h54l38 188h170l39-132H203" fill="none" stroke="#f5c676" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="237" cy="382" r="25" fill="#f7f3e8"/>
+  <circle cx="362" cy="382" r="25" fill="#f7f3e8"/>
+  <path d="m249 243 36 36 73-79" fill="none" stroke="#83d0a7" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

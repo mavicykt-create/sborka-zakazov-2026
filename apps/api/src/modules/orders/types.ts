@@ -16,6 +16,7 @@ export interface ParsedOrder {
   documentNumber: string;
   documentDate: string; // YYYY-MM-DD
   warehouse: string;
+  orderTotal: number | null;
   items: ParsedOrderItem[];
   warnings: string[];
 }

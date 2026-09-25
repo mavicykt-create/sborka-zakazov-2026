@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { API_BASE } from './apiBase';
 import { type SoundName, soundLabels } from './audio/soundPlayer';
 import { useVoicePickerController, type VoiceQueueSnapshot } from './picker/voicePickerController';
+import { TabletEmailPicker } from './TabletEmailPicker';
 import { SPEECH_RATES, type SpeechRate } from './voice/speechSynthesis';
 import './styles.css';
 
@@ -96,7 +97,7 @@ type ImportAttempt = {
   errorMessage: string | null;
   createdAt: string;
 };
-type EmailOrderStatus = 'RECEIVED' | 'IMPORTED' | 'DUPLICATE' | 'FAILED';
+type EmailOrderStatus = 'RECEIVED' | 'IMPORTED' | 'UPDATED' | 'DUPLICATE' | 'FAILED';
 type EmailOrderImport = {
   id: string;
   provider: string;
@@ -483,12 +484,13 @@ function App() {
         messages: number;
         attachments: number;
         imported: number;
+        updated: number;
         duplicates: number;
         failed: number;
       }>(`${API}/api/email-orders/sync`, { method: 'POST' });
       await refreshLists();
       setNotice(
-        `Почта проверена: писем ${result.messages}, новых заказов ${result.imported}, дублей ${result.duplicates}, ошибок ${result.failed}.`,
+        `Почта проверена: писем ${result.messages}, новых заказов ${result.imported}, обновлено ${result.updated}, дублей ${result.duplicates}, ошибок ${result.failed}.`,
       );
     });
   }
@@ -2045,6 +2047,9 @@ function EmailAssemblyView({
             <span>ошибок</span>
           </div>
         </div>
+        <a className="emailPickerLaunch" href="/picker" target="_blank" rel="noreferrer">
+          Открыть планшет сборщика
+        </a>
       </div>
 
       <div className="emailColumns">
@@ -2185,6 +2190,7 @@ function EmailStatusBadge({ value }: { value: EmailOrderStatus }) {
   const labels: Record<EmailOrderStatus, string> = {
     RECEIVED: 'Получено',
     IMPORTED: 'Создан заказ',
+    UPDATED: 'Заказ обновлён',
     DUPLICATE: 'Дубль',
     FAILED: 'Ошибка',
   };
@@ -2718,8 +2724,12 @@ function isString(value: string | null): value is string {
 const root = document.getElementById('root');
 if (!root) throw new Error('Не найден корневой элемент приложения');
 
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => void navigator.serviceWorker.register('/sw.js'));
+}
+
 createRoot(root).render(
   <React.StrictMode>
-    <App />
+    {window.location.pathname === '/picker' ? <TabletEmailPicker /> : <App />}
   </React.StrictMode>,
 );

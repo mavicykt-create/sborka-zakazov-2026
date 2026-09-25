@@ -22,6 +22,7 @@ function cellText(cell: ExcelJS.Cell): string {
 }
 
 function num(v: unknown): number | null {
+  if (v && typeof v === 'object' && 'result' in v) return num((v as { result: unknown }).result);
   const s = text(v).replace(',', '.');
   if (!s) return null;
   const n = Number(s);
@@ -100,6 +101,7 @@ export async function parseOrderXlsx(buffer: Buffer): Promise<ParsedOrder> {
   let documentNumber = '';
   let documentDate = '';
   let warehouse = '';
+  let orderTotal: number | null = null;
 
   sheet.eachRow({ includeEmpty: false }, (row) => {
     row.eachCell({ includeEmpty: false }, (cell) => {
@@ -124,7 +126,9 @@ export async function parseOrderXlsx(buffer: Buffer): Promise<ParsedOrder> {
       // Merged header cells repeat the master's value in ExcelJS. Keep the
       // leftmost column, which is the actual data/master column.
       if (!rowNumberCol && /^№$/u.test(value)) rowNumberCol = colNumber;
-      if (!rowBarcodeCol && /код\s*\/\s*штрихкод/iu.test(value)) rowBarcodeCol = colNumber;
+      if (!rowBarcodeCol && /^(?:код|артикул|код\s*\/\s*штрихкод)$/iu.test(value)) {
+        rowBarcodeCol = colNumber;
+      }
       if (!rowProductCol && /^товар$/iu.test(value)) rowProductCol = colNumber;
       if (!rowQuantityStartCol && /^количество$/iu.test(value)) rowQuantityStartCol = colNumber;
       if (!rowPriceCol && /^цена$/iu.test(value)) rowPriceCol = colNumber;
@@ -144,17 +148,31 @@ export async function parseOrderXlsx(buffer: Buffer): Promise<ParsedOrder> {
     throw new Error('Не удалось найти заголовки Товар/Количество/Цена');
   }
 
-  // Warehouse: first useful textual cell above header that is not the document title.
+  // Prefer an explicit warehouse cell. 1C layouts often contain supplier and
+  // customer blocks before it, so the first arbitrary text cell is unreliable.
   for (let r = 1; r < headerRow; r++) {
     const row = sheet.getRow(r);
     row.eachCell({ includeEmpty: false }, (cell) => {
       const v = cellText(cell);
-      if (v && !/товарный чек/iu.test(v) && !warehouse) warehouse = v;
+      if (v && /склад/iu.test(v) && !/поставщик|покупатель/iu.test(v) && !warehouse) warehouse = v;
     });
   }
 
   if (!documentNumber || !documentDate) throw new Error('Не удалось определить номер или дату документа');
   if (!warehouse) warehouse = 'Не определён';
+
+  sheet.eachRow({ includeEmpty: false }, (row) => {
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      if (orderTotal != null || !/^итого\s*:?$/iu.test(cellText(cell))) return;
+      for (let column = colNumber + 1; column <= row.cellCount; column += 1) {
+        const value = num(row.getCell(column).value);
+        if (value != null) {
+          orderTotal = value;
+          break;
+        }
+      }
+    });
+  });
 
   // 1C exports merge each quantity cell. Structural starts keep both columns
   // discoverable even when one of them is empty for every product.
@@ -242,5 +260,5 @@ export async function parseOrderXlsx(buffer: Buffer): Promise<ParsedOrder> {
   const warnings = parsed
     .filter((x) => x.pickType === 'REVIEW')
     .map((x) => `Строка ${x.sourceLine}: не определено количество`);
-  return { documentNumber, documentDate, warehouse, items: parsed, warnings };
+  return { documentNumber, documentDate, warehouse, orderTotal, items: parsed, warnings };
 }

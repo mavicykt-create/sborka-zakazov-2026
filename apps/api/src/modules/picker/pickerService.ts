@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { EventType, Prisma } from '@prisma/client';
 import { db } from '../../db.js';
 import { verifyPassword } from '../auth/password.js';
+import { findProductsByCode } from '../catalog/productCatalogService.js';
 import { WorkflowError } from '../workflow/workflowService.js';
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
@@ -106,7 +107,11 @@ export async function getPickerQueue(workerId: string) {
 
   const [items, latestOutcome] = await Promise.all([
     db.orderItem.findMany({
-      where: { assignedWorkerId: workerId, status: { in: ['ASSIGNED', 'ACTIVE'] } },
+      where: {
+        assignedWorkerId: workerId,
+        status: { in: ['ASSIGNED', 'ACTIVE'] },
+        order: { status: { notIn: ['CLOSED', 'CANCELLED'] } },
+      },
       orderBy: [{ order: { createdAt: 'asc' } }, { sortIndex: 'asc' }],
       select: pickerItemSelect,
     }),
@@ -127,6 +132,106 @@ export async function getPickerQueue(workerId: string) {
         ? { ...latestOutcome.item, eventType: latestOutcome.type, completedAt: latestOutcome.serverAt }
         : null,
   };
+}
+
+function valueNumber(value: Prisma.Decimal | null) {
+  return value == null ? 0 : Number(value);
+}
+
+export async function getAssemblyBoard(workerId: string) {
+  const worker = await db.worker.findUnique({ where: { id: workerId }, select: pickerWorkerSelect });
+  if (!worker) throw new WorkflowError('Сборщик не найден', 404);
+  const orders = await db.order.findMany({
+    where: { sourceSystem: { in: ['GMAIL', 'EMAIL_MANUAL'] } },
+    take: 8,
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    include: { items: { orderBy: { sortIndex: 'asc' } } },
+  });
+  const codes = orders.flatMap((order) => order.items.map((item) => item.barcode));
+  const products = await findProductsByCode(codes);
+  return {
+    worker,
+    generatedAt: new Date().toISOString(),
+    orders: orders.map(({ items, ...order }) => {
+      const picked = items.filter((item) => item.status === 'PICKED');
+      return {
+        ...order,
+        orderTotal: order.orderTotal == null ? null : Number(order.orderTotal),
+        summary: {
+          lineCount: items.length,
+          packageCount: items.reduce((sum, item) => sum + valueNumber(item.packageQuantity), 0),
+          pieceCount: items.reduce((sum, item) => sum + valueNumber(item.pieceQuantity), 0),
+          pickedLines: picked.length,
+          pickedPackages: picked.reduce((sum, item) => sum + valueNumber(item.packageQuantity), 0),
+          pickedPieces: picked.reduce((sum, item) => sum + valueNumber(item.pieceQuantity), 0),
+        },
+        items: items.map((item) => {
+          const product = item.barcode ? products.get(item.barcode) : null;
+          return {
+            ...item,
+            packageQuantity: item.packageQuantity == null ? null : Number(item.packageQuantity),
+            pieceQuantity: item.pieceQuantity == null ? null : Number(item.pieceQuantity),
+            pickQuantity: Number(item.pickQuantity),
+            imageUrl: product?.imageUrl ?? null,
+            productUrl: product?.productUrl ?? null,
+            catalogTitle: product?.title ?? null,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+export async function claimAssemblyOrder(orderId: string, workerId: string) {
+  return db.$transaction(async (tx) => {
+    const [worker, order] = await Promise.all([
+      tx.worker.findUnique({ where: { id: workerId } }),
+      tx.order.findUnique({ where: { id: orderId }, include: { items: true } }),
+    ]);
+    if (!worker) throw new WorkflowError('Сборщик не найден', 404);
+    if (!worker.isActive || worker.shiftStatus === 'OFF_SHIFT') {
+      throw new WorkflowError('Смена закрыта. Обратитесь к администратору', 409);
+    }
+    if (!order) throw new WorkflowError('Заказ не найден', 404);
+    if (!['GMAIL', 'EMAIL_MANUAL'].includes(order.sourceSystem ?? '')) {
+      throw new WorkflowError('Это не заказ из email', 409);
+    }
+    if (['CLOSED', 'CANCELLED'].includes(order.status)) throw new WorkflowError('Заказ уже закрыт', 409);
+    const anotherWorker = order.items.find(
+      (item) =>
+        item.assignedWorkerId &&
+        item.assignedWorkerId !== workerId &&
+        ['ASSIGNED', 'ACTIVE'].includes(item.status),
+    );
+    if (anotherWorker) throw new WorkflowError('Заказ уже собирает другой сотрудник', 409);
+
+    const now = new Date();
+    const assignable = order.items.filter(
+      (item) =>
+        item.status === 'PENDING' || (item.assignedWorkerId === workerId && item.status === 'ASSIGNED'),
+    );
+    for (const item of assignable) {
+      if (item.status !== 'PENDING') continue;
+      await tx.orderItem.update({
+        where: { id: item.id },
+        data: { assignedWorkerId: workerId, assignedAt: now, status: 'ASSIGNED' },
+      });
+      await tx.orderEvent.create({
+        data: { orderId, itemId: item.id, workerId, type: 'ITEM_ASSIGNED', metadata: { emailBoard: true } },
+      });
+    }
+    await tx.order.update({
+      where: { id: orderId },
+      data: { status: order.startedAt ? 'PICKING' : 'ASSIGNED', completedAt: null, closedAt: null },
+    });
+    await tx.worker.update({ where: { id: workerId }, data: { shiftStatus: 'BUSY' } });
+    if (assignable.some((item) => item.status === 'PENDING')) {
+      await tx.orderEvent.create({
+        data: { orderId, workerId, type: 'ORDER_ASSIGNED', metadata: { emailBoard: true } },
+      });
+    }
+    return { ok: true };
+  });
 }
 
 export function assertPickerCanWork(worker: { shiftStatus: string }) {

@@ -72,6 +72,7 @@ enum ImportStatus {
 enum EmailOrderStatus {
   RECEIVED
   IMPORTED
+  UPDATED
   DUPLICATE
   FAILED
 }
@@ -87,6 +88,7 @@ model Order {
   sourceRevision String?
   sourceCustomer String?
   sourcePosted   Boolean      @default(true)
+  orderTotal     Decimal?     @db.Decimal(14, 2)
   status         OrderStatus  @default(NEW)
   startedAt      DateTime?
   completedAt    DateTime?
@@ -100,6 +102,7 @@ model Order {
 
   @@unique([documentNumber, documentDate, warehouse])
   @@unique([sourceSystem, sourceId])
+  @@index([sourceSystem, updatedAt])
 }
 
 model EmailOrderImport {
@@ -113,6 +116,7 @@ model EmailOrderImport {
   attachmentId   String?
   attachmentName String
   attachmentHash String?
+  orderTotal     Decimal?         @db.Decimal(14, 2)
   status         EmailOrderStatus @default(RECEIVED)
   orderId        String?
   errorMessage   String?
