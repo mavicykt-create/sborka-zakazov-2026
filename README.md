@@ -76,15 +76,20 @@ curl -F "file=@test-data/sample-order-12293.xlsx" http://localhost:8080/api/orde
 
 ## Сборка по email
 
-Вкладка «Сборка по email» показывает состояние подключения Gmail, позволяет вручную проверить
-XLSX-вложение и ведёт журнал писем со ссылками на созданные заказы. Автоматический обмен использует
-OAuth: задайте `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` и `GMAIL_REFRESH_TOKEN`. Пароль от почты сервис
-не хранит. По умолчанию каждые 5 секунд выбираются непрочитанные письма с XLSX-вложением; фильтр и
-период меняются через `GMAIL_QUERY` и `GMAIL_POLL_INTERVAL_MS`.
+Вкладка «Сборка по email» показывает состояние подключения почты, позволяет вручную проверить
+XLSX-вложение и ведёт журнал писем со ссылками на созданные заказы. Для Яндекс 360 включите в настройках
+ящика доступ почтовых программ по IMAP, создайте отдельный пароль приложения типа «Почта» и задайте
+`IMAP_USER=mail@sladkayaplaneta.ru` и `IMAP_PASSWORD=<пароль приложения>`. Подключение выполняется к
+`imap.yandex.com:993` через SSL; обычный пароль от Яндекс ID сервису не нужен. По умолчанию каждые
+5 секунд выбираются непрочитанные письма с XLSX-вложением. Папка, необязательный фильтр отправителя и
+период меняются через `IMAP_MAILBOX`, `IMAP_SENDER` и `IMAP_POLL_INTERVAL_MS`.
+
+Gmail OAuth остаётся запасным вариантом через `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` и
+`GMAIL_REFRESH_TOKEN`. Если заданы IMAP-параметры, сервис использует Яндекс Почту в первую очередь.
 
 Повторное письмо или одинаковое вложение не создаёт второй заказ. Новое письмо с тем же номером
 обновляет строки и сумму существующего заказа, а письмо со следующим номером закрывает предыдущий.
-Ручная проверка доступна и до подключения Gmail.
+Ручная проверка доступна и до подключения почтового ящика.
 
 Планшетный PWA открывается по адресу `/picker`. Фотографии товаров сопоставляются по коду из XML
 `https://milku.ru/site1/export-google-whatsp/` (`g:id` → `g:image_link`); адрес можно заменить через
@@ -253,8 +258,9 @@ CORS и отдельного frontend-проекта.
 
 5. Добавьте runtime variables `NODE_ENV=production`, `PORT=8080`, `ADMIN_USERNAME=admin`,
    `YANDEX_SPEECHKIT_VOICE=alena`, `ONEC_EXCHANGE_TOKEN=<случайная строка от 32 символов>`,
-   при автоматическом импорте писем — OAuth-параметры `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`,
-   `GMAIL_REFRESH_TOKEN` и `GMAIL_USER`, `ADMIN_PUBLIC_URL=https://<production-domain>` и
+   при автоматическом импорте из Яндекс Почты — `IMAP_HOST=imap.yandex.com`, `IMAP_PORT=993`,
+   `IMAP_SECURE=true`, `IMAP_USER=mail@sladkayaplaneta.ru`, `IMAP_PASSWORD=<пароль приложения>`,
+   `IMAP_MAILBOX=INBOX`, `IMAP_POLL_INTERVAL_MS=5000`; а также `ADMIN_PUBLIC_URL=https://<production-domain>` и
    `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
    дублируйте в обычных variables.
 6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и

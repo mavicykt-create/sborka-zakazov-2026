@@ -142,7 +142,7 @@ export async function getAssemblyBoard(workerId: string) {
   const worker = await db.worker.findUnique({ where: { id: workerId }, select: pickerWorkerSelect });
   if (!worker) throw new WorkflowError('Сборщик не найден', 404);
   const orders = await db.order.findMany({
-    where: { sourceSystem: { in: ['GMAIL', 'EMAIL_MANUAL'] } },
+    where: { sourceSystem: { in: ['GMAIL', 'YANDEX_IMAP', 'EMAIL_MANUAL'] } },
     take: 8,
     orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
     include: { items: { orderBy: { sortIndex: 'asc' } } },
@@ -193,7 +193,7 @@ export async function claimAssemblyOrder(orderId: string, workerId: string) {
       throw new WorkflowError('Смена закрыта. Обратитесь к администратору', 409);
     }
     if (!order) throw new WorkflowError('Заказ не найден', 404);
-    if (!['GMAIL', 'EMAIL_MANUAL'].includes(order.sourceSystem ?? '')) {
+    if (!['GMAIL', 'YANDEX_IMAP', 'EMAIL_MANUAL'].includes(order.sourceSystem ?? '')) {
       throw new WorkflowError('Это не заказ из email', 409);
     }
     if (['CLOSED', 'CANCELLED'].includes(order.status)) throw new WorkflowError('Заказ уже закрыт', 409);

@@ -19,7 +19,11 @@ import {
 } from './modules/auth/adminAuth.js';
 import { getDashboard, getPublicSettings } from './modules/dashboard/dashboardService.js';
 import { importManualEmailAttachment, listEmailOrderImports } from './modules/email/emailOrderService.js';
-import { getGmailConfiguration, getGmailStatus, syncGmailOrders } from './modules/email/gmailOrderService.js';
+import {
+  getEmailConnectionStatus,
+  getEmailPollInterval,
+  syncEmailOrders,
+} from './modules/email/mailboxOrderService.js';
 import {
   authenticateOneC,
   importExpenseInvoiceFromOneC,
@@ -226,27 +230,27 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
 
-  let gmailPollTimer: NodeJS.Timeout | undefined;
-  let gmailSync: Promise<unknown> | undefined;
-  const runGmailSync = () => {
-    if (gmailSync) return gmailSync;
-    gmailSync = syncGmailOrders()
-      .catch((error) => app.log.error(error, 'Gmail order sync failed'))
+  let emailPollTimer: NodeJS.Timeout | undefined;
+  let emailSync: Promise<unknown> | undefined;
+  const runEmailSync = () => {
+    if (emailSync) return emailSync;
+    emailSync = syncEmailOrders()
+      .catch((error) => app.log.error(error, 'Email order sync failed'))
       .finally(() => {
-        gmailSync = undefined;
+        emailSync = undefined;
       });
-    return gmailSync;
+    return emailSync;
   };
 
   app.addHook('onReady', async () => {
-    const status = getGmailStatus();
+    const status = getEmailConnectionStatus();
     if (!status.automatic) return;
-    void runGmailSync();
-    gmailPollTimer = setInterval(() => void runGmailSync(), status.intervalSeconds * 1000);
-    gmailPollTimer.unref();
+    void runEmailSync();
+    emailPollTimer = setInterval(() => void runEmailSync(), getEmailPollInterval());
+    emailPollTimer.unref();
   });
   app.addHook('onClose', async () => {
-    if (gmailPollTimer) clearInterval(gmailPollTimer);
+    if (emailPollTimer) clearInterval(emailPollTimer);
   });
 
   const adminCookieOptions = {
@@ -342,11 +346,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const query = emailImportQuerySchema.parse(request.query);
     return listEmailOrderImports(query.limit);
   });
-  app.get('/api/email-orders/status', async () => getGmailStatus());
-  app.post('/api/email-orders/sync', async () => {
-    const config = getGmailConfiguration();
-    return syncGmailOrders(config);
-  });
+  app.get('/api/email-orders/status', async () => getEmailConnectionStatus());
+  app.post('/api/email-orders/sync', async () => syncEmailOrders());
   app.post<{ Querystring: unknown }>('/api/email-orders/import-xlsx', async (request, reply) => {
     const metadata = manualEmailImportQuerySchema.parse(request.query);
     const file = await request.file();

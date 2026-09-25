@@ -6,7 +6,7 @@ import { getOrderDetails, WorkflowError } from '../workflow/workflowService.js';
 
 export type EmailAttachmentInput = {
   sourceKey: string;
-  provider: 'GMAIL' | 'MANUAL';
+  provider: 'GMAIL' | 'YANDEX_IMAP' | 'MANUAL';
   messageId: string;
   sender: string;
   subject: string;
@@ -17,6 +17,14 @@ export type EmailAttachmentInput = {
   orderNumber?: string | null;
   orderTotal?: number | null;
 };
+
+const EMAIL_SOURCE_SYSTEMS = ['GMAIL', 'YANDEX_IMAP', 'EMAIL_MANUAL'];
+
+function sourceSystemFor(provider: EmailAttachmentInput['provider'], fallback?: string | null) {
+  if (provider === 'GMAIL') return 'GMAIL';
+  if (provider === 'YANDEX_IMAP') return 'YANDEX_IMAP';
+  return fallback || 'EMAIL_MANUAL';
+}
 
 function decimalNumber(value: Prisma.Decimal | number | null | undefined) {
   return value == null ? null : Number(value);
@@ -117,7 +125,7 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
         let order = await tx.order.findFirst({
           where: {
             OR: [
-              { sourceSystem: 'GMAIL', sourceId: parsed.documentNumber },
+              { sourceSystem: { in: EMAIL_SOURCE_SYSTEMS }, sourceId: parsed.documentNumber },
               { documentNumber: parsed.documentNumber, documentDate, warehouse: parsed.warehouse },
               { sourceHash: attachmentHash },
             ],
@@ -128,7 +136,7 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
         if (!order) {
           const previousOrders = await tx.order.findMany({
             where: {
-              sourceSystem: 'GMAIL',
+              sourceSystem: { in: EMAIL_SOURCE_SYSTEMS },
               documentNumber: { not: parsed.documentNumber },
               status: { notIn: ['CLOSED', 'CANCELLED'] },
             },
@@ -177,7 +185,7 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
               documentDate,
               warehouse: parsed.warehouse,
               sourceHash: attachmentHash,
-              sourceSystem: input.provider === 'GMAIL' ? 'GMAIL' : 'EMAIL_MANUAL',
+              sourceSystem: sourceSystemFor(input.provider),
               sourceId: parsed.documentNumber,
               sourceRevision: input.receivedAt.toISOString(),
               orderTotal,
@@ -273,7 +281,7 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
             documentDate,
             warehouse: parsed.warehouse,
             sourceHash: attachmentHash,
-            sourceSystem: input.provider === 'GMAIL' ? 'GMAIL' : order.sourceSystem || 'EMAIL_MANUAL',
+            sourceSystem: sourceSystemFor(input.provider, order.sourceSystem),
             sourceId: parsed.documentNumber,
             sourceRevision: input.receivedAt.toISOString(),
             orderTotal,

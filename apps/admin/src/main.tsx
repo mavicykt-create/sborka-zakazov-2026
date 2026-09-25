@@ -118,7 +118,7 @@ type EmailOrderImport = {
   } | null;
 };
 type EmailConnectionStatus = {
-  provider: 'GMAIL';
+  provider: 'GMAIL' | 'YANDEX_IMAP';
   configured: boolean;
   automatic: boolean;
   mailbox: string;
@@ -2067,7 +2067,15 @@ function EmailAssemblyView({
           {connection ? (
             <>
               <div className="connectionState">
-                <strong>{connection.configured ? 'Gmail настроен' : 'Gmail ещё не подключён'}</strong>
+                <strong>
+                  {connection.configured
+                    ? connection.provider === 'YANDEX_IMAP'
+                      ? 'Яндекс Почта подключена'
+                      : 'Gmail настроен'
+                    : connection.provider === 'YANDEX_IMAP'
+                      ? 'Яндекс Почта ещё не подключена'
+                      : 'Gmail ещё не подключён'}
+                </strong>
                 <span>
                   {connection.automatic
                     ? `Новые письма проверяются каждые ${connection.intervalSeconds} сек.`
@@ -2094,7 +2102,8 @@ function EmailAssemblyView({
               </button>
               {!connection.configured && (
                 <p className="emailConnectionHint">
-                  Для включения нужны безопасные OAuth-параметры Gmail. Пароль от почты сервис не хранит.
+                  Для Яндекс Почты укажите полный адрес ящика и отдельный пароль приложения. Обычный пароль от
+                  аккаунта использовать не нужно.
                 </p>
               )}
             </>
@@ -2177,7 +2186,7 @@ function EmailAssemblyView({
           ))}
           {!imports.length && (
             <div className="empty compact">
-              Писем пока нет. Загрузите тестовое вложение или подключите Gmail.
+              Писем пока нет. Загрузите тестовое вложение или подключите почтовый ящик.
             </div>
           )}
         </div>
