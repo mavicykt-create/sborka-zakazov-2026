@@ -93,6 +93,12 @@ export async function parseImapMessage(source: Buffer) {
   };
 }
 
+async function resolveMailbox(client: ImapFlow, requested: string) {
+  if (!['SENT', 'AUTO_SENT'].includes(requested.trim().toUpperCase())) return requested;
+  const mailboxes = await client.list();
+  return mailboxes.find((mailbox) => mailbox.specialUse === '\\Sent')?.path || 'Sent';
+}
+
 export async function syncImapOrders(
   config: ImapConfiguration = getImapConfiguration(),
   createClient: (options: ImapFlowOptions) => ImapFlow = (options) => new ImapFlow(options),
@@ -109,7 +115,8 @@ export async function syncImapOrders(
 
   try {
     await client.connect();
-    const lock = await client.getMailboxLock(config.mailbox);
+    const mailbox = await resolveMailbox(client, config.mailbox);
+    const lock = await client.getMailboxLock(mailbox);
     try {
       const search = config.sender
         ? config.unseenOnly
@@ -141,9 +148,9 @@ export async function syncImapOrders(
           summary.attachments += 1;
           try {
             const result = await importEmailAttachment({
-              sourceKey: `imap:${config.host}:${config.mailbox}:${message.uid}:${index}`,
+              sourceKey: `imap:${config.host}:${mailbox}:${message.uid}:${index}`,
               provider: 'YANDEX_IMAP',
-              messageId: parsed.messageId || `${config.mailbox}:${message.uid}`,
+              messageId: parsed.messageId || `${mailbox}:${message.uid}`,
               sender: parsed.sender,
               subject: parsed.subject,
               receivedAt:
