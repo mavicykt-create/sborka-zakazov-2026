@@ -14,6 +14,7 @@ export type ImapConfiguration = {
   password: string;
   mailbox: string;
   sender?: string;
+  unseenOnly: boolean;
   intervalMs: number;
 };
 
@@ -47,8 +48,8 @@ export function getImapStatus(environment: Environment = process.env) {
     automatic: missingSettings.length === 0 && intervalMs > 0,
     mailbox: environment.IMAP_USER || 'mail@sladkayaplaneta.ru',
     query: environment.IMAP_SENDER
-      ? `Непрочитанные письма с XLSX от ${environment.IMAP_SENDER}`
-      : 'Непрочитанные письма с XLSX',
+      ? `${parseBoolean(environment.IMAP_UNSEEN_ONLY, true) ? 'Непрочитанные' : 'Последние'} письма с XLSX от ${environment.IMAP_SENDER}`
+      : `${parseBoolean(environment.IMAP_UNSEEN_ONLY, true) ? 'Непрочитанные' : 'Последние'} письма с XLSX`,
     intervalSeconds: Math.round(intervalMs / 1000),
     missingSettings,
   };
@@ -69,6 +70,7 @@ export function getImapConfiguration(environment: Environment = process.env): Im
     password,
     mailbox: environment.IMAP_MAILBOX || 'INBOX',
     sender: environment.IMAP_SENDER || undefined,
+    unseenOnly: parseBoolean(environment.IMAP_UNSEEN_ONLY, true),
     intervalMs: status.intervalSeconds * 1000,
   };
 }
@@ -109,7 +111,13 @@ export async function syncImapOrders(
     await client.connect();
     const lock = await client.getMailboxLock(config.mailbox);
     try {
-      const search = config.sender ? { seen: false, from: config.sender } : { seen: false };
+      const search = config.sender
+        ? config.unseenOnly
+          ? { seen: false, from: config.sender }
+          : { all: true, from: config.sender }
+        : config.unseenOnly
+          ? { seen: false }
+          : { all: true };
       const unseen = (await client.search(search, { uid: true })) || [];
       const uids = Array.isArray(unseen) ? unseen.slice(-50) : [];
       summary.messages = uids.length;
@@ -153,7 +161,9 @@ export async function syncImapOrders(
             summary.failed += 1;
           }
         }
-        if (parsed.attachments.length) await client.messageFlagsAdd(message.uid, ['\\Seen'], { uid: true });
+        if (config.unseenOnly && parsed.attachments.length) {
+          await client.messageFlagsAdd(message.uid, ['\\Seen'], { uid: true });
+        }
       }
     } finally {
       lock.release();

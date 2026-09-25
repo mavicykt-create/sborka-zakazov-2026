@@ -82,7 +82,9 @@ XLSX-вложение и ведёт журнал писем со ссылкам�
 `IMAP_USER=mail@sladkayaplaneta.ru` и `IMAP_PASSWORD=<пароль приложения>`. Подключение выполняется к
 `imap.yandex.com:993` через SSL; обычный пароль от Яндекс ID сервису не нужен. По умолчанию каждые
 5 секунд выбираются непрочитанные письма с XLSX-вложением. Папка, необязательный фильтр отправителя и
-период меняются через `IMAP_MAILBOX`, `IMAP_SENDER` и `IMAP_POLL_INTERVAL_MS`.
+период меняются через `IMAP_MAILBOX`, `IMAP_SENDER` и `IMAP_POLL_INTERVAL_MS`. Если заказы отправляются
+из самого подключённого ящика, выберите папку отправленных через `IMAP_MAILBOX` и задайте
+`IMAP_UNSEEN_ONLY=false`, потому что отправленные письма уже имеют признак прочитанных.
 
 Gmail OAuth остаётся запасным вариантом через `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` и
 `GMAIL_REFRESH_TOKEN`. Если заданы IMAP-параметры, сервис использует Яндекс Почту в первую очередь.
@@ -260,7 +262,8 @@ CORS и отдельного frontend-проекта.
    `YANDEX_SPEECHKIT_VOICE=alena`, `ONEC_EXCHANGE_TOKEN=<случайная строка от 32 символов>`,
    при автоматическом импорте из Яндекс Почты — `IMAP_HOST=imap.yandex.com`, `IMAP_PORT=993`,
    `IMAP_SECURE=true`, `IMAP_USER=mail@sladkayaplaneta.ru`, `IMAP_PASSWORD=<пароль приложения>`,
-   `IMAP_MAILBOX=INBOX`, `IMAP_POLL_INTERVAL_MS=5000`; а также `ADMIN_PUBLIC_URL=https://<production-domain>` и
+   `IMAP_MAILBOX=INBOX`, `IMAP_UNSEEN_ONLY=true`, `IMAP_POLL_INTERVAL_MS=5000`; а также
+   `ADMIN_PUBLIC_URL=https://<production-domain>` и
    `ADMIN_ORIGIN=https://<production-domain>`. `VITE_API_URL` не задавайте. Значения secrets не
    дублируйте в обычных variables.
 6. В настройках application активируйте бесплатный HTTPS-домен Amvera или подключите собственный и

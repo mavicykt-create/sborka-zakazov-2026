@@ -35,6 +35,7 @@ describe('Yandex IMAP order configuration', () => {
       password: 'app-password',
       mailbox: 'INBOX',
       sender: undefined,
+      unseenOnly: true,
       intervalMs: 10000,
     });
     expect(JSON.stringify(getImapStatus(environment))).not.toContain('app-password');
