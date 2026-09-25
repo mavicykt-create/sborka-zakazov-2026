@@ -15,6 +15,7 @@ export type ImapConfiguration = {
   mailbox: string;
   sender?: string;
   unseenOnly: boolean;
+  lookbackMs: number;
   intervalMs: number;
 };
 
@@ -26,6 +27,12 @@ function parseInterval(raw?: string) {
 function parsePort(raw?: string) {
   const value = Number(raw ?? 993);
   return Number.isInteger(value) && value > 0 && value <= 65_535 ? value : 993;
+}
+
+function parseLookback(raw?: string) {
+  const value = Number(raw ?? 15);
+  const minutes = Number.isFinite(value) && value >= 1 && value <= 10_080 ? value : 15;
+  return Math.round(minutes * 60_000);
 }
 
 function parseBoolean(raw: string | undefined, fallback: boolean) {
@@ -71,6 +78,7 @@ export function getImapConfiguration(environment: Environment = process.env): Im
     mailbox: environment.IMAP_MAILBOX || 'INBOX',
     sender: environment.IMAP_SENDER || undefined,
     unseenOnly: parseBoolean(environment.IMAP_UNSEEN_ONLY, true),
+    lookbackMs: parseLookback(environment.IMAP_LOOKBACK_MINUTES),
     intervalMs: status.intervalSeconds * 1000,
   };
 }
@@ -127,12 +135,14 @@ export async function syncImapOrders(
           : { all: true };
       const unseen = (await client.search(search, { uid: true })) || [];
       const uids = Array.isArray(unseen) ? unseen.slice(-50) : [];
-      summary.messages = uids.length;
       const messages = uids.length
         ? await client.fetchAll(uids, { uid: true, source: true, internalDate: true }, { uid: true })
         : [];
+      const cutoff = config.unseenOnly ? null : Date.now() - config.lookbackMs;
 
       for (const message of messages) {
+        if (cutoff && message.internalDate && new Date(message.internalDate).getTime() < cutoff) continue;
+        summary.messages += 1;
         if (!message.source) {
           summary.failed += 1;
           continue;
