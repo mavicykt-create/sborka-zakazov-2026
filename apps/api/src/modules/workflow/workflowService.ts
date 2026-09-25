@@ -329,10 +329,18 @@ export async function changeItemStatus(
           OR: [{ status: { in: ['NOT_FOUND', 'SKIPPED'] } }, { pickType: 'REVIEW' }],
         },
       });
-      const finalOrderStatus = problemCount > 0 ? 'REVIEW_REQUIRED' : 'COMPLETED';
+      const confirmedByEmail =
+        Boolean(item.order.emailConfirmedAt) &&
+        ['GMAIL', 'YANDEX_IMAP', 'EMAIL_MANUAL'].includes(item.order.sourceSystem ?? '');
+      const finalOrderStatus =
+        problemCount > 0 ? 'REVIEW_REQUIRED' : confirmedByEmail ? 'CLOSED' : 'COMPLETED';
       await tx.order.update({
         where: { id: item.orderId },
-        data: { status: finalOrderStatus, completedAt: now },
+        data: {
+          status: finalOrderStatus,
+          completedAt: now,
+          closedAt: finalOrderStatus === 'CLOSED' ? now : null,
+        },
       });
       await tx.orderEvent.create({
         data: {
@@ -341,6 +349,15 @@ export async function changeItemStatus(
           metadata: { finalStatus: finalOrderStatus, problemCount },
         },
       });
+      if (finalOrderStatus === 'CLOSED') {
+        await tx.orderEvent.create({
+          data: {
+            orderId: item.orderId,
+            type: 'ORDER_CLOSED',
+            metadata: { reason: 'EMAIL_ORDER_CONFIRMED', closedAt: now.toISOString() },
+          },
+        });
+      }
       const orderWorkers = await tx.orderItem.findMany({
         where: { orderId: item.orderId, assignedWorkerId: { not: null } },
         distinct: ['assignedWorkerId'],

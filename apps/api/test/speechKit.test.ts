@@ -149,6 +149,19 @@ describe('picker speech endpoints', () => {
     await app.close();
   });
 
+  it('does not let the tablet close an order before the confirmation email', async () => {
+    const app = await buildApp({ authenticatePicker: testAuthentication });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/picker/orders/order-1/finish',
+      headers: { authorization: 'Bearer picker-test-token' },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'Заказ закроется только после письма «Заказ оформлен»' });
+    await app.close();
+  });
+
   it('rejects invalid text for an authorized picker', async () => {
     const app = await buildApp({
       speechKitService: new YandexSpeechKitService({ apiKey: 'mock-api-key', fetcher: successfulFetch() }),

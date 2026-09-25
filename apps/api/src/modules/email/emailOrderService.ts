@@ -134,51 +134,6 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
         });
 
         if (!order) {
-          const previousOrders = await tx.order.findMany({
-            where: {
-              sourceSystem: { in: EMAIL_SOURCE_SYSTEMS },
-              documentNumber: { not: parsed.documentNumber },
-              status: { notIn: ['CLOSED', 'CANCELLED'] },
-            },
-            include: { items: { select: { assignedWorkerId: true } } },
-          });
-          const previousWorkerIds = new Set<string>();
-          for (const previous of previousOrders) {
-            for (const item of previous.items) {
-              if (item.assignedWorkerId) previousWorkerIds.add(item.assignedWorkerId);
-            }
-            await tx.orderItem.updateMany({
-              where: { orderId: previous.id, status: { in: ['PENDING', 'ASSIGNED', 'ACTIVE'] } },
-              data: { status: 'SKIPPED', pickedAt: input.receivedAt },
-            });
-            await tx.order.update({
-              where: { id: previous.id },
-              data: {
-                status: 'CLOSED',
-                completedAt: previous.completedAt ?? input.receivedAt,
-                closedAt: input.receivedAt,
-              },
-            });
-            await tx.orderEvent.create({
-              data: {
-                orderId: previous.id,
-                type: 'ORDER_CLOSED',
-                metadata: { reason: 'NEW_EMAIL_ORDER', nextDocumentNumber: parsed.documentNumber },
-              },
-            });
-          }
-          for (const workerId of previousWorkerIds) {
-            const unfinished = await tx.orderItem.count({
-              where: { assignedWorkerId: workerId, status: { in: ['ASSIGNED', 'ACTIVE'] } },
-            });
-            if (!unfinished) {
-              await tx.worker.updateMany({
-                where: { id: workerId, isActive: true, shiftStatus: 'BUSY' },
-                data: { shiftStatus: 'AVAILABLE' },
-              });
-            }
-          }
-
           order = await tx.order.create({
             data: {
               documentNumber: parsed.documentNumber,
@@ -343,6 +298,53 @@ export async function importEmailAttachment(input: EmailAttachmentInput) {
     });
     throw error;
   }
+}
+
+export async function confirmEmailOrder(documentNumber: string, receivedAt: Date, messageId: string) {
+  return db.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { sourceSystem: { in: EMAIL_SOURCE_SYSTEMS }, documentNumber },
+      orderBy: { updatedAt: 'desc' },
+      include: { items: true },
+    });
+    if (!order) return { matched: false, closed: false, alreadyConfirmed: false };
+
+    const alreadyConfirmed = order.emailConfirmedAt != null;
+    const allPicked = order.items.length > 0 && order.items.every((item) => item.status === 'PICKED');
+    const shouldClose = allPicked && !['CLOSED', 'CANCELLED'].includes(order.status);
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        emailConfirmedAt: order.emailConfirmedAt ?? receivedAt,
+        ...(shouldClose
+          ? { status: 'CLOSED', completedAt: order.completedAt ?? receivedAt, closedAt: receivedAt }
+          : {}),
+      },
+    });
+    if (shouldClose) {
+      await tx.orderEvent.create({
+        data: {
+          orderId: order.id,
+          type: 'ORDER_CLOSED',
+          metadata: { reason: 'EMAIL_ORDER_CONFIRMED', messageId, receivedAt: receivedAt.toISOString() },
+        },
+      });
+      const workerIds = new Set(order.items.map((item) => item.assignedWorkerId).filter(Boolean));
+      for (const workerId of workerIds) {
+        if (!workerId) continue;
+        const unfinished = await tx.orderItem.count({
+          where: { assignedWorkerId: workerId, status: { in: ['ASSIGNED', 'ACTIVE'] } },
+        });
+        if (!unfinished) {
+          await tx.worker.updateMany({
+            where: { id: workerId, isActive: true, shiftStatus: 'BUSY' },
+            data: { shiftStatus: 'AVAILABLE' },
+          });
+        }
+      }
+    }
+    return { matched: true, closed: shouldClose || order.status === 'CLOSED', alreadyConfirmed };
+  });
 }
 
 export async function importManualEmailAttachment(input: {

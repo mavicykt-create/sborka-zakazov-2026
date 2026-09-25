@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE } from './apiBase';
+import { YandexAudioPlayer } from './voice/yandexSpeech';
 
 type Status =
   | 'NEW'
@@ -79,7 +80,8 @@ function plural(value: number, one: string, few: string, many: string) {
 function spokenSummary(order: BoardOrder) {
   const packages = Math.round(order.summary.packageCount);
   const pieces = Math.round(order.summary.pieceCount);
-  return `${order.summary.lineCount} ${plural(order.summary.lineCount, 'строка', 'строки', 'строк')}, ${packages} ${plural(packages, 'упаковка', 'упаковки', 'упаковок')}, ${pieces} ${plural(pieces, 'штука', 'штуки', 'штук')}`;
+  const base = `Собрано ${order.summary.lineCount} ${plural(order.summary.lineCount, 'строка', 'строки', 'строк')}, ${packages} ${plural(packages, 'упаковка', 'упаковки', 'упаковок')}`;
+  return pieces > 0 ? `${base}, ${pieces} ${plural(pieces, 'штука', 'штуки', 'штук')}` : base;
 }
 
 function playChime() {
@@ -104,18 +106,22 @@ function playChime() {
   window.setTimeout(() => void context.close(), 1000);
 }
 
-function announce(order: BoardOrder, updated = false) {
-  playChime();
+function systemSpeak(text: string) {
   if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
-  const speech = new SpeechSynthesisUtterance(
-    updated
-      ? `Заказ номер ${order.documentNumber} обновлён. ${spokenSummary(order)}.`
-      : `Заказ номер ${order.documentNumber} поступил. Заказ оформлен. ${spokenSummary(order)}.`,
-  );
+  const speech = new SpeechSynthesisUtterance(text);
   speech.lang = 'ru-RU';
-  speech.rate = 0.94;
+  speech.rate = 1.04;
+  const voices = window.speechSynthesis.getVoices();
+  speech.voice =
+    voices.find((voice) => /алис|alice|yandex|ал[её]на|alena/iu.test(`${voice.name} ${voice.voiceURI}`)) ??
+    voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) ??
+    null;
   window.speechSynthesis.speak(speech);
+}
+
+function shortOrderNumber(order: BoardOrder) {
+  return order.documentNumber.slice(-2);
 }
 
 function qty(value: number | null) {
@@ -129,15 +135,45 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
   const [selectedId, setSelectedId] = useState('');
   const [message, setMessage] = useState('');
   const [busyItem, setBusyItem] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('emailPickerSound') === 'on');
+  const [zoomedImage, setZoomedImage] = useState<{ src: string; name: string } | null>(null);
+  const [yandexSpeechEnabled, setYandexSpeechEnabled] = useState(false);
   const revisions = useRef<Map<string, string> | null>(null);
   const suppressNextAnnouncements = useRef(false);
   const tapTimes = useRef(new Map<string, number>());
-  const tapTimers = useRef(new Map<string, number>());
+  const audioPlayer = useRef(new YandexAudioPlayer());
 
   const selected = useMemo(
     () => board?.orders.find((order) => order.id === selectedId) ?? board?.orders[0] ?? null,
     [board, selectedId],
+  );
+
+  const speak = useCallback(
+    async (text: string) => {
+      if (yandexSpeechEnabled) {
+        try {
+          const response = await fetch(`${API_BASE}/api/picker/speech`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          if (response.ok && (await audioPlayer.current.speak(await response.blob()))) return;
+        } catch {
+          // Системная Алиса/русский голос — резерв при недоступности SpeechKit.
+        }
+      }
+      systemSpeak(text);
+    },
+    [token, yandexSpeechEnabled],
+  );
+
+  const announce = useCallback(
+    (order: BoardOrder, updated = false) => {
+      playChime();
+      void speak(
+        updated ? `Заказ ${shortOrderNumber(order)} обновлён` : `Новый заказ ${shortOrderNumber(order)}`,
+      );
+    },
+    [speak],
   );
 
   const loadBoard = useCallback(
@@ -146,7 +182,7 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
       try {
         const next = await json<Board>('/api/picker/assembly-board', token);
         const nextRevisions = new Map(next.orders.map((order) => [order.id, order.updatedAt]));
-        if (revisions.current && soundEnabled && !suppressNextAnnouncements.current) {
+        if (revisions.current && !suppressNextAnnouncements.current) {
           for (const order of next.orders) {
             if (order.status === 'CLOSED' || order.status === 'CANCELLED') continue;
             const before = revisions.current.get(order.id);
@@ -174,7 +210,7 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
         }
       }
     },
-    [token, soundEnabled],
+    [announce, token],
   );
 
   useEffect(() => {
@@ -183,6 +219,14 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
     const timer = window.setInterval(() => void loadBoard(true), 3000);
     return () => window.clearInterval(timer);
   }, [loadBoard, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    void json<{ yandexEnabled: boolean }>('/api/picker/speech/settings', token)
+      .then((settings) => setYandexSpeechEnabled(settings.yandexEnabled))
+      .catch(() => setYandexSpeechEnabled(false));
+    return () => audioPlayer.current.cancel();
+  }, [token]);
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
@@ -213,21 +257,34 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
 
   async function pick(item: BoardItem) {
     if (!selected || busyItem || ['CLOSED', 'CANCELLED'].includes(selected.status)) return;
+    const order = selected;
+    const completesOrder = order.items.every((entry) => entry.id === item.id || entry.status === 'PICKED');
     setBusyItem(item.id);
     setMessage('');
+    setBoard((current) =>
+      current
+        ? {
+            ...current,
+            orders: current.orders.map((entry) =>
+              entry.id === order.id
+                ? {
+                    ...entry,
+                    items: entry.items.map((row) =>
+                      row.id === item.id ? { ...row, status: 'PICKED' as const } : row,
+                    ),
+                  }
+                : entry,
+            ),
+          }
+        : current,
+    );
     try {
-      await json(`/api/picker/orders/${selected.id}/claim`, token, { method: 'POST' });
-      if (item.status === 'PENDING' || item.status === 'ASSIGNED') {
-        await json(`/api/picker/items/${item.id}/status`, token, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: 'ACTIVE', deviceAt: new Date().toISOString() }),
-        });
-      }
-      await json(`/api/picker/items/${item.id}/status`, token, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'PICKED', deviceAt: new Date().toISOString() }),
+      await json(`/api/picker/orders/${order.id}/items/${item.id}/pick`, token, {
+        method: 'POST',
+        body: JSON.stringify({ deviceAt: new Date().toISOString() }),
       });
       suppressNextAnnouncements.current = true;
+      if (completesOrder) void speak(`${spokenSummary(order)}.`);
       await loadBoard(true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось отметить товар');
@@ -240,6 +297,20 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
   async function undo(item: BoardItem) {
     if (busyItem) return;
     setBusyItem(item.id);
+    tapTimes.current.delete(item.id);
+    setBoard((current) =>
+      current
+        ? {
+            ...current,
+            orders: current.orders.map((order) => ({
+              ...order,
+              items: order.items.map((row) =>
+                row.id === item.id ? { ...row, status: 'ACTIVE' as const } : row,
+              ),
+            })),
+          }
+        : current,
+    );
     try {
       await json(`/api/picker/items/${item.id}/undo`, token, {
         method: 'POST',
@@ -255,44 +326,14 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
   }
 
   function handleCart(item: BoardItem) {
-    const now = Date.now();
-    const last = tapTimes.current.get(item.id) || 0;
-    const timer = tapTimers.current.get(item.id);
-    if (now - last < 380) {
-      if (timer) window.clearTimeout(timer);
-      tapTimers.current.delete(item.id);
-      tapTimes.current.delete(item.id);
-      if (item.status === 'PICKED') void undo(item);
+    if (item.status !== 'PICKED') {
+      void pick(item);
       return;
     }
+    const now = Date.now();
+    const last = tapTimes.current.get(item.id) || 0;
     tapTimes.current.set(item.id, now);
-    if (item.status !== 'PICKED') {
-      const nextTimer = window.setTimeout(() => {
-        tapTimers.current.delete(item.id);
-        tapTimes.current.delete(item.id);
-        void pick(item);
-      }, 300);
-      tapTimers.current.set(item.id, nextTimer);
-    }
-  }
-
-  async function finish() {
-    if (!selected) return;
-    try {
-      await json(`/api/picker/orders/${selected.id}/finish`, token, { method: 'POST' });
-      setMessage(`Заказ №${selected.documentNumber} собран и закрыт`);
-      suppressNextAnnouncements.current = true;
-      await loadBoard(true);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Не удалось завершить заказ');
-    }
-  }
-
-  function enableSound() {
-    const enabled = !soundEnabled;
-    setSoundEnabled(enabled);
-    localStorage.setItem('emailPickerSound', enabled ? 'on' : 'off');
-    if (enabled && selected && !['CLOSED', 'CANCELLED'].includes(selected.status)) announce(selected, false);
+    if (now - last < 360) void undo(item);
   }
 
   if (!token) {
@@ -332,18 +373,11 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
 
   if (!board) return <main className="tabletPicker tabletLoading">Загружаем заказы…</main>;
 
-  const complete = Boolean(
-    selected && selected.items.length > 0 && selected.items.every((item) => item.status === 'PICKED'),
-  );
   const closed = Boolean(selected && ['CLOSED', 'CANCELLED'].includes(selected.status));
 
   return (
     <main className={`tabletPicker ${embedded ? 'isEmbedded' : ''}`}>
       <header className="tabletHeader">
-        <div>
-          <p className="tabletEyebrow">Сборка по email</p>
-          <strong>{board.worker.name}</strong>
-        </div>
         <nav className="orderTabs" aria-label="Заказы">
           {board.orders.map((order) => (
             <button
@@ -353,18 +387,10 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
               onClick={() => setSelectedId(order.id)}
             >
               №{order.documentNumber}
-              <small>
-                {order.status === 'CLOSED'
-                  ? 'закрыт'
-                  : `${order.summary.pickedLines}/${order.summary.lineCount}`}
-              </small>
             </button>
           ))}
         </nav>
         <div className="tabletHeaderActions">
-          <button type="button" className={soundEnabled ? 'soundOn' : ''} onClick={enableSound}>
-            {soundEnabled ? '🔊 Звук' : '🔇 Включить звук'}
-          </button>
           <button type="button" onClick={() => void logout()}>
             Выйти
           </button>
@@ -379,117 +405,75 @@ export function TabletEmailPicker({ embedded = false }: { embedded?: boolean }) 
         </section>
       )}
       {selected && (
-        <>
-          <section className="orderSummary">
-            <div>
-              <span>Заказ</span>
-              <strong>№{selected.documentNumber}</strong>
-            </div>
-            <div>
-              <span>Строк</span>
-              <strong>{selected.summary.lineCount}</strong>
-            </div>
-            <div>
-              <span>Упаковок</span>
-              <strong>
-                {selected.summary.pickedPackages}/{selected.summary.packageCount}
-              </strong>
-            </div>
-            <div>
-              <span>Штук</span>
-              <strong>
-                {selected.summary.pickedPieces}/{selected.summary.pieceCount}
-              </strong>
-            </div>
-            {selected.orderTotal != null && (
-              <div>
-                <span>Сумма</span>
-                <strong>{selected.orderTotal.toLocaleString('ru-RU')} ₽</strong>
-              </div>
-            )}
-          </section>
-
-          <section className={`assemblyList ${closed ? 'isClosed' : ''}`}>
-            {selected.items.map((item) => {
-              const packages = qty(item.packageQuantity);
-              const pieces = qty(item.pieceQuantity);
-              const pieceOnly = item.pickType === 'PIECE' || (!packages && pieces > 0);
-              const picked = item.status === 'PICKED';
-              return (
-                <article
-                  className={`assemblyRow ${pieceOnly ? 'isPiece' : ''} ${picked ? 'isPicked' : ''}`}
-                  key={item.id}
+        <section className={`assemblyList ${closed ? 'isClosed' : ''}`}>
+          {selected.items.map((item) => {
+            const packages = qty(item.packageQuantity);
+            const pieces = qty(item.pieceQuantity);
+            const pieceOnly = item.pickType === 'PIECE' || (!packages && pieces > 0);
+            const picked = item.status === 'PICKED';
+            return (
+              <article
+                className={`assemblyRow ${pieceOnly ? 'isPiece' : ''} ${picked ? 'isPicked' : ''}`}
+                key={item.id}
+              >
+                <button
+                  type="button"
+                  className="productPhoto"
+                  disabled={!item.imageUrl}
+                  onClick={() => item.imageUrl && setZoomedImage({ src: item.imageUrl, name: item.name })}
+                  aria-label={item.imageUrl ? `Увеличить фото: ${item.name}` : 'Фото товара отсутствует'}
                 >
-                  <div className="productPhoto">
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt="" loading="lazy" />
-                    ) : (
-                      <span>{item.barcode || '—'}</span>
-                    )}
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt={item.name} loading="lazy" />
+                  ) : (
+                    <span>{item.barcode || '—'}</span>
+                  )}
+                </button>
+                <div className="productInfo">
+                  <div className="productBadges">
+                    <b>Код {item.barcode || 'не указан'}</b>
+                    {pieceOnly && <em>ШТУЧНЫЙ ТОВАР</em>}
                   </div>
-                  <div className="productInfo">
-                    <div className="productBadges">
-                      <b>Код {item.barcode || 'не указан'}</b>
-                      {pieceOnly && <em>ШТУЧНЫЙ ТОВАР</em>}
-                    </div>
-                    <h2>{item.name}</h2>
-                  </div>
-                  <div className={`assemblyQuantity ${pieceOnly ? 'isPiece' : ''}`}>
-                    {packages > 0 && pieces > 0 ? (
-                      <>
-                        <strong>
-                          {packages}/{pieces}
-                        </strong>
-                        <span>уп / шт</span>
-                      </>
-                    ) : pieceOnly ? (
-                      <>
-                        <strong>{pieces}</strong>
-                        <span>шт</span>
-                      </>
-                    ) : (
-                      <>
-                        <strong>{packages}</strong>
-                        <span>упаковок</span>
-                      </>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="cartButton"
-                    disabled={Boolean(busyItem) || closed}
-                    onClick={() => handleCart(item)}
-                    aria-label={picked ? 'Дважды нажмите, чтобы вернуть товар' : 'Отметить товар собранным'}
-                  >
-                    {picked ? '✓' : '🛒'}
-                    <small>{picked ? 'Собрано' : 'В корзину'}</small>
-                  </button>
-                </article>
-              );
-            })}
-          </section>
-
-          <footer className="assemblyFooter">
-            <p>
-              {closed
-                ? 'Этот заказ закрыт'
-                : 'Одно касание — собрано. Два касания по собранной позиции — вернуть.'}
-            </p>
-            <button
-              type="button"
-              className={complete ? 'canFinish' : ''}
-              disabled={!complete || closed}
-              onClick={() => void finish()}
-            >
-              <span>✓</span>
-              {closed
-                ? 'Заказ закрыт'
-                : complete
-                  ? 'Заказ собран'
-                  : `Собрано ${selected.summary.pickedLines} из ${selected.summary.lineCount}`}
+                  <h2>{item.name}</h2>
+                </div>
+                <div className={`assemblyQuantity ${pieceOnly ? 'isPiece' : ''}`}>
+                  {pieceOnly ? (
+                    <>
+                      <strong>{pieces}</strong>
+                      <span>шт</span>
+                    </>
+                  ) : (
+                    <>
+                      <strong>{packages}</strong>
+                      <span>{plural(packages, 'упак', 'упак', 'упак')}</span>
+                    </>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="cartButton"
+                  disabled={busyItem === item.id || closed}
+                  onClick={() => handleCart(item)}
+                  aria-label={picked ? 'Дважды нажмите, чтобы вернуть товар' : 'Отметить товар собранным'}
+                >
+                  {picked ? '✓' : '🛒'}
+                </button>
+              </article>
+            );
+          })}
+        </section>
+      )}
+      {zoomedImage && (
+        <div className="productZoom" role="dialog" aria-modal="true" aria-label={zoomedImage.name}>
+          <button type="button" className="productZoomBackdrop" onClick={() => setZoomedImage(null)} />
+          <figure>
+            <img src={zoomedImage.src} alt={zoomedImage.name} />
+            <figcaption>{zoomedImage.name}</figcaption>
+            <button type="button" onClick={() => setZoomedImage(null)} aria-label="Закрыть увеличенное фото">
+              ×
             </button>
-          </footer>
-        </>
+          </figure>
+        </div>
       )}
     </main>
   );

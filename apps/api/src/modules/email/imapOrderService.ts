@@ -1,8 +1,8 @@
 import { ImapFlow, type ImapFlowOptions } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { WorkflowError } from '../workflow/workflowService.js';
-import { parseEmailOrderMetadata } from './emailMetadata.js';
-import { importEmailAttachment } from './emailOrderService.js';
+import { isEmailOrderConfirmation, parseEmailOrderMetadata } from './emailMetadata.js';
+import { confirmEmailOrder, importEmailAttachment } from './emailOrderService.js';
 
 type Environment = NodeJS.ProcessEnv;
 
@@ -98,6 +98,7 @@ export async function parseImapMessage(source: Buffer) {
     receivedAt: parsed.date,
     attachments,
     metadata,
+    confirmation: isEmailOrderConfirmation(subject, text),
   };
 }
 
@@ -119,7 +120,15 @@ export async function syncImapOrders(
     logger: false,
     connectionTimeout: 30_000,
   });
-  const summary = { messages: 0, attachments: 0, imported: 0, updated: 0, duplicates: 0, failed: 0 };
+  const summary = {
+    messages: 0,
+    attachments: 0,
+    imported: 0,
+    updated: 0,
+    duplicates: 0,
+    confirmed: 0,
+    failed: 0,
+  };
 
   try {
     await client.connect();
@@ -154,6 +163,8 @@ export async function syncImapOrders(
           summary.failed += 1;
           continue;
         }
+        const receivedAt =
+          parsed.receivedAt || (message.internalDate ? new Date(message.internalDate) : new Date());
         for (const [index, attachment] of parsed.attachments.entries()) {
           summary.attachments += 1;
           try {
@@ -163,8 +174,7 @@ export async function syncImapOrders(
               messageId: parsed.messageId || `${mailbox}:${message.uid}`,
               sender: parsed.sender,
               subject: parsed.subject,
-              receivedAt:
-                parsed.receivedAt || (message.internalDate ? new Date(message.internalDate) : new Date()),
+              receivedAt,
               attachmentId: `${message.uid}:${index}`,
               attachmentName: attachment.filename || `attachment-${index + 1}.xlsx`,
               buffer: attachment.content,
@@ -178,7 +188,17 @@ export async function syncImapOrders(
             summary.failed += 1;
           }
         }
-        if (config.unseenOnly && parsed.attachments.length) {
+        let confirmationMatched = false;
+        if (parsed.confirmation && parsed.metadata.orderNumber) {
+          const confirmation = await confirmEmailOrder(
+            parsed.metadata.orderNumber,
+            receivedAt,
+            parsed.messageId || `${mailbox}:${message.uid}`,
+          );
+          confirmationMatched = confirmation.matched;
+          if (confirmation.matched && !confirmation.alreadyConfirmed) summary.confirmed += 1;
+        }
+        if (config.unseenOnly && (parsed.attachments.length || confirmationMatched)) {
           await client.messageFlagsAdd(message.uid, ['\\Seen'], { uid: true });
         }
       }

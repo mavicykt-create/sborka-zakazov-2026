@@ -3,7 +3,7 @@ import type { EventType, Prisma } from '@prisma/client';
 import { db } from '../../db.js';
 import { verifyPassword } from '../auth/password.js';
 import { findProductsByCode } from '../catalog/productCatalogService.js';
-import { WorkflowError } from '../workflow/workflowService.js';
+import { changeItemStatus, WorkflowError } from '../workflow/workflowService.js';
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const finalEventTypes: EventType[] = ['ITEM_PICKED', 'ITEM_NOT_FOUND', 'ITEM_SKIPPED', 'ITEM_UNDONE'];
@@ -159,11 +159,23 @@ export async function getAssemblyBoard(workerId: string) {
         orderTotal: order.orderTotal == null ? null : Number(order.orderTotal),
         summary: {
           lineCount: items.length,
-          packageCount: items.reduce((sum, item) => sum + valueNumber(item.packageQuantity), 0),
-          pieceCount: items.reduce((sum, item) => sum + valueNumber(item.pieceQuantity), 0),
+          packageCount: items.reduce(
+            (sum, item) => sum + (item.pickType === 'PACKAGE' ? valueNumber(item.packageQuantity) : 0),
+            0,
+          ),
+          pieceCount: items.reduce(
+            (sum, item) => sum + (item.pickType === 'PIECE' ? valueNumber(item.pieceQuantity) : 0),
+            0,
+          ),
           pickedLines: picked.length,
-          pickedPackages: picked.reduce((sum, item) => sum + valueNumber(item.packageQuantity), 0),
-          pickedPieces: picked.reduce((sum, item) => sum + valueNumber(item.pieceQuantity), 0),
+          pickedPackages: picked.reduce(
+            (sum, item) => sum + (item.pickType === 'PACKAGE' ? valueNumber(item.packageQuantity) : 0),
+            0,
+          ),
+          pickedPieces: picked.reduce(
+            (sum, item) => sum + (item.pickType === 'PIECE' ? valueNumber(item.pieceQuantity) : 0),
+            0,
+          ),
         },
         items: items.map((item) => {
           const product = item.barcode ? products.get(item.barcode) : null;
@@ -232,6 +244,17 @@ export async function claimAssemblyOrder(orderId: string, workerId: string) {
     }
     return { ok: true };
   });
+}
+
+export async function pickAssemblyItem(orderId: string, itemId: string, workerId: string, deviceAt?: Date) {
+  await claimAssemblyOrder(orderId, workerId);
+  const item = await db.orderItem.findFirst({ where: { id: itemId, orderId } });
+  if (!item) throw new WorkflowError('Позиция не найдена', 404);
+  if (item.status === 'PICKED') return { ok: true, alreadyPicked: true };
+  if (item.status === 'ASSIGNED') await changeItemStatus(itemId, 'ACTIVE', workerId, deviceAt);
+  const current = await db.orderItem.findUnique({ where: { id: itemId }, select: { status: true } });
+  if (current?.status !== 'ACTIVE') throw new WorkflowError('Позицию сейчас нельзя собрать', 409);
+  return changeItemStatus(itemId, 'PICKED', workerId, deviceAt);
 }
 
 export function assertPickerCanWork(worker: { shiftStatus: string }) {

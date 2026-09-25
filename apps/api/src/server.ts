@@ -39,6 +39,7 @@ import {
   getPickerQueue,
   loginPicker,
   logoutPicker,
+  pickAssemblyItem,
 } from './modules/picker/pickerService.js';
 import { createOrderReport } from './modules/reports/reportService.js';
 import {
@@ -391,10 +392,23 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return claimAssemblyOrder(request.params.id, session.worker.id);
   });
   app.post<{ Params: { id: string } }>('/api/picker/orders/:id/finish', async (request) => {
-    const session = await authenticatePicker(request.headers.authorization);
-    assertPickerCanWork(session.worker);
-    return closeOrder(request.params.id, session.worker.name, 'Собрано на планшете');
+    await authenticatePickerRequest(request.headers.authorization);
+    throw new WorkflowError('Заказ закроется только после письма «Заказ оформлен»', 409);
   });
+  app.post<{ Params: { orderId: string; itemId: string }; Body: unknown }>(
+    '/api/picker/orders/:orderId/items/:itemId/pick',
+    async (request) => {
+      const session = await authenticatePicker(request.headers.authorization);
+      assertPickerCanWork(session.worker);
+      const body = pickerUndoSchema.parse(request.body ?? {});
+      return pickAssemblyItem(
+        request.params.orderId,
+        request.params.itemId,
+        session.worker.id,
+        body.deviceAt ? new Date(body.deviceAt) : undefined,
+      );
+    },
+  );
   app.get('/api/picker/speech/settings', async (request) => {
     await authenticatePickerRequest(request.headers.authorization);
     return speechKitService.getPublicSettings();

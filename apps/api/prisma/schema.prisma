@@ -93,6 +93,7 @@ model Order {
   startedAt      DateTime?
   completedAt    DateTime?
   closedAt       DateTime?
+  emailConfirmedAt DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   items          OrderItem[]
